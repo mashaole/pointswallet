@@ -20,7 +20,7 @@ func NewTransactionController(wallet *walletsvc.Service, maxBytes int64) *Transa
 func (c *TransactionController) MemberTransaction(w http.ResponseWriter, r *http.Request) {
 	claims, ok := ClaimsFromContext(r.Context())
 	if !ok {
-		writeError(w, MapDomainError(models.ErrUnauthorized))
+		WriteError(w, MapDomainError(models.ErrUnauthorized))
 		return
 	}
 	c.postTransaction(w, r, claims.Sub, claims.Sub)
@@ -29,7 +29,7 @@ func (c *TransactionController) MemberTransaction(w http.ResponseWriter, r *http
 func (c *TransactionController) AdminTransaction(w http.ResponseWriter, r *http.Request) {
 	claims, ok := ClaimsFromContext(r.Context())
 	if !ok {
-		writeError(w, MapDomainError(models.ErrUnauthorized))
+		WriteError(w, MapDomainError(models.ErrUnauthorized))
 		return
 	}
 	accountID := r.PathValue("id")
@@ -38,16 +38,25 @@ func (c *TransactionController) AdminTransaction(w http.ResponseWriter, r *http.
 
 func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.Request, accountID, actorID string) {
 	var req dto.TransactionRequest
-	if !decodeAndValidateJSON(w, r, c.maxBytes, &req, func(d *dto.TransactionRequest) { d.Sanitize() }, req.Validate) {
+	if !decodeAndValidateJSON(w, r, c.maxBytes, &req, func(d *dto.TransactionRequest) { d.Sanitize() }, nil) {
+		return
+	}
+	ref, err := dto.ResolveTransactionRef(r.Header.Get(models.IdempotencyKeyHeader), req.Ref)
+	if err != nil {
+		WriteError(w, MapDomainError(err))
+		return
+	}
+	if err := req.ValidateWithResolvedRef(ref); err != nil {
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	occurredAt, err := req.OccurredTime()
 	if err != nil {
-		writeError(w, MapDomainError(models.ErrValidation))
+		WriteError(w, MapDomainError(models.ErrValidation))
 		return
 	}
 	entry, err := c.wallet.ApplyTransaction(r.Context(), models.TransactionInput{
-		Ref:            req.Ref,
+		Ref:            ref,
 		AccountID:      accountID,
 		Kind:           req.Kind,
 		WholePoints:    req.Points,
@@ -56,7 +65,7 @@ func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.R
 		Source:         models.SourceAPI,
 	})
 	if err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	writeData(w, http.StatusCreated, ledgerEntryResponse(entry))
@@ -71,6 +80,7 @@ func ledgerEntryResponse(e models.LedgerEntry) map[string]any {
 		"balance_after_points": e.BalanceAfterPoints.WholePoints(),
 		"occurred_at":          e.OccurredAt,
 		"recorded_at":          e.RecordedAt,
+		"actor_account_id":     e.ActorAccountID,
 		"source":               e.Source,
 	}
 }

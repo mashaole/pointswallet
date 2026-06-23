@@ -21,7 +21,7 @@ func NewLedgerController(wallet *walletsvc.Service, cfg config.Config) *LedgerCo
 func (c *LedgerController) MyLedger(w http.ResponseWriter, r *http.Request) {
 	claims, ok := ClaimsFromContext(r.Context())
 	if !ok {
-		writeError(w, MapDomainError(models.ErrUnauthorized))
+		WriteError(w, MapDomainError(models.ErrUnauthorized))
 		return
 	}
 	c.listLedger(w, r, claims.Sub)
@@ -35,12 +35,12 @@ func (c *LedgerController) listLedger(w http.ResponseWriter, r *http.Request, ac
 	p := dto.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"),
 		c.cfg.PaginationDefaultLimit, c.cfg.PaginationMaxLimit)
 	if err := p.Validate(c.cfg.PaginationMaxLimit); err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	entries, total, err := c.wallet.ListLedger(r.Context(), accountID, p.Limit, p.Offset)
 	if err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	data := make([]map[string]any, 0, len(entries))

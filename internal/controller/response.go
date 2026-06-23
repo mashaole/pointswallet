@@ -29,10 +29,6 @@ func writeData(w http.ResponseWriter, status int, data any) {
 }
 
 func WriteError(w http.ResponseWriter, apiErr models.APIError) {
-	writeError(w, apiErr)
-}
-
-func writeError(w http.ResponseWriter, apiErr models.APIError) {
 	writeJSON(w, apiErr.Status, errorResponse{Error: apiErrorBody{
 		Code: apiErr.Code, Message: apiErr.Message, Status: apiErr.Status,
 	}})
@@ -53,12 +49,14 @@ func MapDomainError(err error) models.APIError {
 		return models.NewAPIError("duplicate_ref", "Transaction ref already exists", http.StatusConflict)
 	case errors.Is(err, models.ErrEmailAlreadyExists):
 		return models.NewAPIError("email_already_exists", "Email already registered", http.StatusConflict)
+	case errors.Is(err, models.ErrAccountAlreadyExists):
+		return models.NewAPIError("account_already_exists", "Account ID already exists", http.StatusConflict)
+	case errors.Is(err, models.ErrLastAdmin):
+		return models.NewAPIError("last_admin", "Cannot remove or demote the last admin account", http.StatusConflict)
 	case errors.Is(err, models.ErrInvalidRole):
 		return models.NewAPIError("invalid_role", "Role must be member or admin", http.StatusBadRequest)
 	case errors.Is(err, models.ErrUnauthorized):
 		return models.NewAPIError("unauthorized", "Unauthorized", http.StatusUnauthorized)
-	case errors.Is(err, models.ErrForbidden):
-		return models.NewAPIError("forbidden", "Forbidden", http.StatusForbidden)
 	case errors.Is(err, models.ErrNotFound):
 		return models.NewAPIError("not_found", "Resource not found", http.StatusNotFound)
 	case errors.Is(err, models.ErrValidation), errors.Is(err, models.ErrInvalidEmail),

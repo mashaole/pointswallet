@@ -21,28 +21,28 @@ func NewBatchController(batch *batchsvc.Service, cfg config.Config) *BatchContro
 func (c *BatchController) Upload(w http.ResponseWriter, r *http.Request) {
 	claims, ok := ClaimsFromContext(r.Context())
 	if !ok {
-		writeError(w, MapDomainError(models.ErrUnauthorized))
+		WriteError(w, MapDomainError(models.ErrUnauthorized))
 		return
 	}
 	if err := r.ParseMultipartForm(c.cfg.MaxRequestBodyBytes); err != nil {
-		writeError(w, models.NewAPIError("validation_error", "Invalid multipart form", http.StatusBadRequest))
+		WriteError(w, models.NewAPIError("validation_error", "Invalid multipart form", http.StatusBadRequest))
 		return
 	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
-		writeError(w, models.NewAPIError("validation_error", "file field required", http.StatusBadRequest))
+		WriteError(w, models.NewAPIError("validation_error", "file field required", http.StatusBadRequest))
 		return
 	}
 	defer file.Close()
 
 	rows, err := batchsvc.ParseCSV(file)
 	if err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	jobID := batchsvc.NewJobID()
-	if err := c.batch.CreateJob(r.Context(), jobID, rows); err != nil {
-		writeError(w, MapDomainError(err))
+	if err := c.batch.CreateJob(r.Context(), jobID, len(rows)); err != nil {
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	c.batch.ProcessAsync(r.Context(), jobID, rows, claims.Sub)
@@ -56,7 +56,7 @@ func (c *BatchController) Upload(w http.ResponseWriter, r *http.Request) {
 func (c *BatchController) GetJob(w http.ResponseWriter, r *http.Request) {
 	job, err := c.batch.GetJob(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	resp := map[string]any{
@@ -84,12 +84,12 @@ func (c *BatchController) Audit(w http.ResponseWriter, r *http.Request) {
 	p := dto.ParsePagination(r.URL.Query().Get("limit"), r.URL.Query().Get("offset"),
 		c.cfg.PaginationDefaultLimit, c.cfg.PaginationMaxLimit)
 	if err := p.Validate(c.cfg.PaginationMaxLimit); err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	events, total, err := c.batch.ListAudit(r.Context(), r.PathValue("id"), p.Limit, p.Offset)
 	if err != nil {
-		writeError(w, MapDomainError(err))
+		WriteError(w, MapDomainError(err))
 		return
 	}
 	data := make([]map[string]any, 0, len(events))

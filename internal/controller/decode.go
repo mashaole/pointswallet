@@ -14,25 +14,25 @@ func decodeAndValidateJSON[T any](
 	maxBytes int64,
 	dst *T,
 	sanitize func(*T),
-	validate func() error,
+	validate func(*T) error,
 ) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		writeError(w, models.NewAPIError("validation_error", "Invalid JSON body", http.StatusBadRequest))
+		WriteError(w, models.NewAPIError("validation_error", "Invalid JSON body", http.StatusBadRequest))
 		return false
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		writeError(w, models.NewAPIError("validation_error", "Request body must contain a single JSON object", http.StatusBadRequest))
+		WriteError(w, models.NewAPIError("validation_error", "Request body must contain a single JSON object", http.StatusBadRequest))
 		return false
 	}
 	if sanitize != nil {
 		sanitize(dst)
 	}
 	if validate != nil {
-		if err := validate(); err != nil {
-			writeError(w, MapDomainError(err))
+		if err := validate(dst); err != nil {
+			WriteError(w, MapDomainError(err))
 			return false
 		}
 	}

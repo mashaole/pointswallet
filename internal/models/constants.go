@@ -27,3 +27,8 @@ const (
 	AuditAccepted = "accepted"
 	AuditRejected = "rejected"
 )
+
+const (
+	// IdempotencyKeyHeader is the HTTP header for API transaction idempotency (maps to ledger ref).
+	IdempotencyKeyHeader = "Idempotency-Key"
+)

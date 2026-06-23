@@ -27,7 +27,7 @@ func Auth(cfg AuthConfig) func(http.Handler) http.Handler {
 				controller.WriteError(w, models.NewAPIError("unauthorized", "Unauthorized", http.StatusUnauthorized))
 				return
 			}
-			if err := cfg.Auth.ValidateSession(r.Context(), claims); err != nil {
+			if err := cfg.Auth.ValidateToken(r.Context(), claims); err != nil {
 				controller.WriteError(w, models.NewAPIError("unauthorized", "Unauthorized", http.StatusUnauthorized))
 				return
 			}
