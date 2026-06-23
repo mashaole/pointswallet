@@ -1,0 +1,415 @@
+{
+  "info": {
+    "name": "Points Wallet API",
+    "description": "Single-file collection for the Points Wallet service. Import this file once — all variables are collection-scoped (no separate environment needed).\n\nRun order: Admin Login → Create Member → Member Login → Earn → Balance → Batch upload → Poll job.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "adminEmail", "value": "admin@example.com" },
+    { "key": "adminPassword", "value": "admin123" },
+    { "key": "memberEmail", "value": "rina@example.com" },
+    { "key": "memberPassword", "value": "changeme1" },
+    { "key": "adminToken", "value": "" },
+    { "key": "memberToken", "value": "" },
+    { "key": "memberAccountId", "value": "member-1" },
+    { "key": "batchJobId", "value": "" },
+    { "key": "resetToken", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 Auth",
+      "item": [
+        {
+          "name": "Admin Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j.data && j.data.access_token) {",
+                  "  pm.collectionVariables.set('adminToken', j.data.access_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Member Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "if (j.data && j.data.access_token) {",
+                  "  pm.collectionVariables.set('memberToken', j.data.access_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{memberEmail}}\",\n  \"password\": \"{{memberPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/auth/logout"
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.data && j.data.reset_token) {",
+                  "  pm.collectionVariables.set('resetToken', j.data.reset_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{memberEmail}}\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/forgot-password"
+          }
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{resetToken}}\",\n  \"new_password\": \"newpass123\"\n}"
+            },
+            "url": "{{baseUrl}}/auth/reset-password"
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Accounts (Admin)",
+      "item": [
+        {
+          "name": "Create Member",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{memberAccountId}}\",\n  \"name\": \"Rina\",\n  \"email\": \"{{memberEmail}}\",\n  \"password\": \"{{memberPassword}}\",\n  \"role\": \"member\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts"
+          }
+        },
+        {
+          "name": "Create Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"admin-2\",\n  \"name\": \"Sam\",\n  \"email\": \"sam@example.com\",\n  \"password\": \"changeme1\",\n  \"role\": \"admin\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts"
+          }
+        },
+        {
+          "name": "Get Account",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}"
+          }
+        },
+        {
+          "name": "Get Account Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}/balance"
+          }
+        },
+        {
+          "name": "Get Account Ledger",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/{{memberAccountId}}/ledger?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["accounts", "{{memberAccountId}}", "ledger"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Wallet (Member)",
+      "item": [
+        {
+          "name": "My Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "url": "{{baseUrl}}/accounts/me/balance"
+          }
+        },
+        {
+          "name": "Earn Points",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ref\": \"tx-001\",\n  \"kind\": \"earn\",\n  \"points\": 150,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Spend Points",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ref\": \"tx-002\",\n  \"kind\": \"spend\",\n  \"points\": 50,\n  \"occurred_at\": \"2024-06-01T11:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/transactions"
+          }
+        },
+        {
+          "name": "My Ledger",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts/me/ledger?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["accounts", "me", "ledger"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Admin Transactions",
+      "item": [
+        {
+          "name": "Admin Adjust Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ref\": \"tx-admin-001\",\n  \"kind\": \"earn\",\n  \"points\": 25,\n  \"occurred_at\": \"2024-06-01T12:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}/transactions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Batch (Admin)",
+      "item": [
+        {
+          "name": "Upload CSV",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 202', () => pm.response.to.have.status(202));",
+                  "const j = pm.response.json();",
+                  "if (j.data && j.data.batch_job_id) {",
+                  "  pm.collectionVariables.set('batchJobId', j.data.batch_job_id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "sample-batch.csv",
+                  "description": "Attach postman/sample-batch.csv or your own CSV"
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/batch/transactions"
+          }
+        },
+        {
+          "name": "Get Batch Job Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/batch/jobs/{{batchJobId}}"
+          }
+        },
+        {
+          "name": "Get Batch Audit",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/batch/jobs/{{batchJobId}}/audit?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["batch", "jobs", "{{batchJobId}}", "audit"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Negative Cases",
+      "item": [
+        {
+          "name": "Duplicate Ref (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ref\": \"tx-001\",\n  \"kind\": \"earn\",\n  \"points\": 10,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Insufficient Balance (422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ref\": \"tx-overdraw\",\n  \"kind\": \"spend\",\n  \"points\": 999999,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/transactions"
+          }
+        },
+        {
+          "name": "Member Create Account (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"hacker\",\n  \"name\": \"X\",\n  \"email\": \"x@example.com\",\n  \"password\": \"changeme1\",\n  \"role\": \"admin\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          }
+        }
+      ]
+    }
+  ]
+}
