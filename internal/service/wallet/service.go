@@ -3,6 +3,7 @@ package wallet
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -10,13 +11,18 @@ import (
 	"pointswallet/internal/models"
 )
 
-type Service struct {
-	wallet dao.WalletDAO
-	ledger dao.LedgerDAO
+type sessionRevoker interface {
+	RevokeAllTokens(ctx context.Context, accountID string) error
 }
 
-func NewService(wallet dao.WalletDAO, ledger dao.LedgerDAO) *Service {
-	return &Service{wallet: wallet, ledger: ledger}
+type Service struct {
+	wallet   dao.WalletDAO
+	ledger   dao.LedgerDAO
+	sessions sessionRevoker
+}
+
+func NewService(wallet dao.WalletDAO, ledger dao.LedgerDAO, sessions sessionRevoker) *Service {
+	return &Service{wallet: wallet, ledger: ledger, sessions: sessions}
 }
 
 type CreateAccountInput struct {
@@ -58,6 +64,69 @@ func (s *Service) CreateAccount(ctx context.Context, in CreateAccountInput) (mod
 
 func (s *Service) GetAccount(ctx context.Context, accountID string) (models.Account, error) {
 	return s.wallet.GetAccount(ctx, accountID)
+}
+
+func (s *Service) ListAccounts(ctx context.Context, limit, offset int) ([]models.Account, int, error) {
+	return s.wallet.ListAccounts(ctx, limit, offset)
+}
+
+func (s *Service) UpdateMemberProfile(ctx context.Context, accountID, name, email string) (models.Account, error) {
+	normalized, err := models.NormalizeEmail(email)
+	if err != nil {
+		return models.Account{}, err
+	}
+	return s.wallet.UpdateProfile(ctx, accountID, name, normalized)
+}
+
+func (s *Service) UpdateAccountAsAdmin(ctx context.Context, accountID, name, email, role string) (models.Account, error) {
+	normalized, err := models.NormalizeEmail(email)
+	if err != nil {
+		return models.Account{}, err
+	}
+	if role != models.RoleMember && role != models.RoleAdmin {
+		return models.Account{}, models.ErrInvalidRole
+	}
+	current, err := s.wallet.GetAccount(ctx, accountID)
+	if err != nil {
+		return models.Account{}, err
+	}
+	if current.Role == models.RoleAdmin && role == models.RoleMember {
+		if err := s.ensureNotLastAdmin(ctx); err != nil {
+			return models.Account{}, err
+		}
+	}
+	return s.wallet.UpdateProfileRole(ctx, accountID, name, normalized, role)
+}
+
+func (s *Service) SoftDeleteAccount(ctx context.Context, accountID string) error {
+	acct, err := s.wallet.GetAccount(ctx, accountID)
+	if err != nil {
+		return err
+	}
+	if acct.Role == models.RoleAdmin {
+		if err := s.ensureNotLastAdmin(ctx); err != nil {
+			return err
+		}
+	}
+	anonEmail := fmt.Sprintf("deleted+%s+%d@deleted.invalid", accountID, time.Now().UnixNano())
+	if err := s.wallet.SoftDeleteAccount(ctx, accountID, anonEmail); err != nil {
+		return err
+	}
+	if s.sessions != nil {
+		_ = s.sessions.RevokeAllTokens(ctx, accountID)
+	}
+	return nil
+}
+
+func (s *Service) ensureNotLastAdmin(ctx context.Context) error {
+	n, err := s.wallet.CountActiveAdmins(ctx)
+	if err != nil {
+		return err
+	}
+	if n <= 1 {
+		return models.ErrLastAdmin
+	}
+	return nil
 }
 
 func (s *Service) GetBalance(ctx context.Context, accountID string) (models.Points, error) {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -29,9 +30,12 @@ type Config struct {
 	PaginationDefaultLimit   int
 	PaginationMaxLimit       int
 	BatchWorkerCount         int
+	SingleActiveSession      bool
 }
 
 func Load() (Config, error) {
+	loadEnvFile(".env")
+
 	cfg := Config{
 		DatabaseURL:              envOr("DATABASE_URL", "postgres://wallet:wallet@localhost:5432/pointswallet?sslmode=disable"),
 		MaxOpenConns:             envInt("DB_MAX_OPEN_CONNS", 10),
@@ -54,11 +58,35 @@ func Load() (Config, error) {
 		PaginationDefaultLimit:   envInt("PAGINATION_DEFAULT_LIMIT", 20),
 		PaginationMaxLimit:       envInt("PAGINATION_MAX_LIMIT", 100),
 		BatchWorkerCount:         envInt("BATCH_WORKER_COUNT", 8),
+		SingleActiveSession:      envBool("SINGLE_ACTIVE_SESSION", true),
 	}
 	if cfg.JWTSecret == "change-me-in-dev" {
 		fmt.Println("warning: using default JWT_SECRET; set JWT_SECRET in production")
 	}
 	return cfg, nil
+}
+
+// loadEnvFile sets env vars from a .env file when not already defined in the process environment.
+func loadEnvFile(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if key != "" && os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
 }
 
 func envOr(key, def string) string {
@@ -90,6 +118,18 @@ func envFloat(key string, def float64) float64 {
 		return def
 	}
 	return n
+}
+
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
 
 func envDuration(key string, def time.Duration) time.Duration {

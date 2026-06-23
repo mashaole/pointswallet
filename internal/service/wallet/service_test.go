@@ -21,6 +21,21 @@ func (m *mockWalletDAO) CreateAccount(ctx context.Context, acct models.Account) 
 func (m *mockWalletDAO) GetAccount(ctx context.Context, accountID string) (models.Account, error) {
 	return models.Account{}, nil
 }
+func (m *mockWalletDAO) ListAccounts(ctx context.Context, limit, offset int) ([]models.Account, int, error) {
+	return nil, 0, nil
+}
+func (m *mockWalletDAO) UpdateProfile(ctx context.Context, accountID, name, email string) (models.Account, error) {
+	return models.Account{}, nil
+}
+func (m *mockWalletDAO) UpdateProfileRole(ctx context.Context, accountID, name, email, role string) (models.Account, error) {
+	return models.Account{}, nil
+}
+func (m *mockWalletDAO) SoftDeleteAccount(ctx context.Context, accountID, anonymizedEmail string) error {
+	return nil
+}
+func (m *mockWalletDAO) CountActiveAdmins(ctx context.Context) (int, error) {
+	return 1, nil
+}
 func (m *mockWalletDAO) GetBalance(ctx context.Context, accountID string) (models.Points, error) {
 	return m.balance, nil
 }
@@ -52,13 +67,10 @@ type mockLedgerDAO struct{}
 func (m *mockLedgerDAO) ListByAccount(ctx context.Context, accountID string, limit, offset int) ([]models.LedgerEntry, int, error) {
 	return nil, 0, nil
 }
-func (m *mockLedgerDAO) RefExists(ctx context.Context, ref string) (bool, error) {
-	return false, nil
-}
 
 func TestWalletService_Spend_InsufficientBalance(t *testing.T) {
 	dao := &mockWalletDAO{balance: models.PointsFromWhole(10), refs: map[string]bool{}}
-	svc := wallet.NewService(dao, &mockLedgerDAO{})
+	svc := wallet.NewService(dao, &mockLedgerDAO{}, nil)
 	_, err := svc.ApplyTransaction(context.Background(), models.TransactionInput{
 		Ref: "tx-1", AccountID: "a1", Kind: models.KindSpend, WholePoints: 50,
 		OccurredAt: time.Now(), ActorAccountID: "a1", Source: models.SourceAPI,
@@ -70,7 +82,7 @@ func TestWalletService_Spend_InsufficientBalance(t *testing.T) {
 
 func TestWalletService_DuplicateRef(t *testing.T) {
 	dao := &mockWalletDAO{balance: models.PointsFromWhole(100), refs: map[string]bool{}}
-	svc := wallet.NewService(dao, &mockLedgerDAO{})
+	svc := wallet.NewService(dao, &mockLedgerDAO{}, nil)
 	in := models.TransactionInput{
 		Ref: "tx-dup", AccountID: "a1", Kind: models.KindEarn, WholePoints: 10,
 		OccurredAt: time.Now(), ActorAccountID: "a1", Source: models.SourceAPI,

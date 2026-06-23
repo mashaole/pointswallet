@@ -63,10 +63,29 @@ func New(d Deps) http.Handler {
 		middleware.RequireJSON,
 	))
 
+	mux.Handle("GET /accounts", chain(
+		http.HandlerFunc(d.Account.List),
+		middleware.Methods(http.MethodGet),
+		authMW,
+		middleware.RequireAdmin,
+	))
 	mux.Handle("POST /accounts", chain(
 		http.HandlerFunc(d.Account.Create),
 		middleware.Methods(http.MethodPost),
 		middleware.RequireJSON,
+		authMW,
+		middleware.RequireAdmin,
+	))
+	mux.Handle("PATCH /accounts/{id}", chain(
+		http.HandlerFunc(d.Account.Update),
+		middleware.Methods(http.MethodPatch),
+		middleware.RequireJSON,
+		authMW,
+		middleware.RequireAdmin,
+	))
+	mux.Handle("DELETE /accounts/{id}", chain(
+		http.HandlerFunc(d.Account.Delete),
+		middleware.Methods(http.MethodDelete),
 		authMW,
 		middleware.RequireAdmin,
 	))
@@ -99,6 +118,19 @@ func New(d Deps) http.Handler {
 	mux.Handle("GET /accounts/me/balance", chain(
 		http.HandlerFunc(d.Account.MyBalance),
 		middleware.Methods(http.MethodGet),
+		authMW,
+		middleware.RequireMember,
+	))
+	mux.Handle("PATCH /accounts/me", chain(
+		http.HandlerFunc(d.Account.UpdateMe),
+		middleware.Methods(http.MethodPatch),
+		middleware.RequireJSON,
+		authMW,
+		middleware.RequireMember,
+	))
+	mux.Handle("DELETE /accounts/me", chain(
+		http.HandlerFunc(d.Account.DeleteMe),
+		middleware.Methods(http.MethodDelete),
 		authMW,
 		middleware.RequireMember,
 	))

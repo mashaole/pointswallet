@@ -10,25 +10,30 @@ import (
 type WalletDAO interface {
 	CreateAccount(ctx context.Context, acct models.Account) error
 	GetAccount(ctx context.Context, accountID string) (models.Account, error)
+	ListAccounts(ctx context.Context, limit, offset int) ([]models.Account, int, error)
+	UpdateProfile(ctx context.Context, accountID, name, email string) (models.Account, error)
+	UpdateProfileRole(ctx context.Context, accountID, name, email, role string) (models.Account, error)
+	SoftDeleteAccount(ctx context.Context, accountID, anonymizedEmail string) error
+	CountActiveAdmins(ctx context.Context) (int, error)
 	GetBalance(ctx context.Context, accountID string) (models.Points, error)
 	ApplyTransaction(ctx context.Context, in models.TransactionInput) (models.LedgerEntry, error)
 }
 
 type LedgerDAO interface {
 	ListByAccount(ctx context.Context, accountID string, limit, offset int) ([]models.LedgerEntry, int, error)
-	RefExists(ctx context.Context, ref string) (bool, error)
 }
 
 type AuthDAO interface {
 	GetAccountByEmail(ctx context.Context, email string) (models.Account, error)
-	RevokeAllSessions(ctx context.Context, accountID string) error
-	CreateSession(ctx context.Context, sessionID, accountID, jti string, expiresAt time.Time) error
-	GetActiveSession(ctx context.Context, jti string) (accountID string, err error)
-	RevokeSession(ctx context.Context, jti string) error
+	RevokeAllTokens(ctx context.Context, accountID string) error
+	CreateToken(ctx context.Context, id, accountID, token string, expiresAt time.Time) error
+	GetActiveToken(ctx context.Context, token string) (accountID string, err error)
+	RevokeToken(ctx context.Context, token string) error
 	CreateResetToken(ctx context.Context, id, accountID, tokenHash string, expiresAt time.Time) error
 	UseResetToken(ctx context.Context, tokenHash string) (accountID string, err error)
 	UpdatePassword(ctx context.Context, accountID, passwordHash string) error
 	SeedAdminIfMissing(ctx context.Context, acct models.Account) error
+	IsAccountActive(ctx context.Context, accountID string) (bool, error)
 }
 
 type BatchDAO interface {

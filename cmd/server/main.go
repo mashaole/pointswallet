@@ -45,8 +45,8 @@ func main() {
 	batchDAO := postgres.NewBatchDAO(db)
 	auditDAO := postgres.NewAuditDAO(db)
 
-	authService := authsvc.NewService(authDAO, cfg.JWTSecret, cfg.JWTTTL)
-	walletService := walletsvc.NewService(walletDAO, ledgerDAO)
+	authService := authsvc.NewService(authDAO, cfg.JWTSecret, cfg.JWTTTL, cfg.SingleActiveSession)
+	walletService := walletsvc.NewService(walletDAO, ledgerDAO, authDAO)
 	batchService := batchsvc.NewService(batchDAO, auditDAO, walletService, cfg.BatchWorkerCount)
 
 	ctx := context.Background()
@@ -63,7 +63,7 @@ func main() {
 		Cfg:         cfg,
 		Log:         log,
 		Auth:        controller.NewAuthController(authService, cfg.MaxRequestBodyBytes),
-		Account:     controller.NewAccountController(walletService, cfg.MaxRequestBodyBytes),
+		Account:     controller.NewAccountController(walletService, cfg, cfg.MaxRequestBodyBytes),
 		Transaction: controller.NewTransactionController(walletService, cfg.MaxRequestBodyBytes),
 		Ledger:      controller.NewLedgerController(walletService, cfg),
 		Batch:       controller.NewBatchController(batchService, cfg),

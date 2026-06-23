@@ -10,6 +10,8 @@ import (
 	"pointswallet/internal/models"
 )
 
+const activeAccountSQL = `deleted_at IS NULL`
+
 type WalletDAO struct {
 	db *sql.DB
 }
@@ -25,31 +27,109 @@ func (d *WalletDAO) CreateAccount(ctx context.Context, acct models.Account) erro
 		acct.AccountID, acct.Name, acct.Email, acct.PasswordHash, acct.Role, acct.BalancePoints.Int64(),
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
-			if strings.Contains(err.Error(), "accounts_email_unique") {
-				return models.ErrEmailAlreadyExists
-			}
-		}
-		if isCheckViolation(err) {
-			return models.ErrInvalidEmail
-		}
-		return fmt.Errorf("create account: %w", err)
+		return mapAccountInsertErr(err)
 	}
 	return nil
 }
 
 func (d *WalletDAO) GetAccount(ctx context.Context, accountID string) (models.Account, error) {
+	return d.scanAccount(d.db.QueryRowContext(ctx, `
+		SELECT account_id, name, email, password_hash, role, balance_points, created_at
+		FROM accounts WHERE account_id = $1 AND `+activeAccountSQL, accountID,
+	))
+}
+
+func (d *WalletDAO) ListAccounts(ctx context.Context, limit, offset int) ([]models.Account, int, error) {
+	var total int
+	if err := d.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM accounts WHERE `+activeAccountSQL,
+	).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count accounts: %w", err)
+	}
+
+	rows, err := d.db.QueryContext(ctx, `
+		SELECT account_id, name, email, role, balance_points, created_at
+		FROM accounts
+		WHERE `+activeAccountSQL+`
+		ORDER BY created_at ASC, account_id ASC
+		LIMIT $1 OFFSET $2`, limit, offset,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list accounts: %w", err)
+	}
+	defer rows.Close()
+
+	accounts := make([]models.Account, 0, limit)
+	for rows.Next() {
+		var acct models.Account
+		var balance int64
+		if err := rows.Scan(&acct.AccountID, &acct.Name, &acct.Email, &acct.Role, &balance, &acct.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan account: %w", err)
+		}
+		acct.BalancePoints = models.Points(balance)
+		accounts = append(accounts, acct)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("list accounts rows: %w", err)
+	}
+	return accounts, total, nil
+}
+
+func (d *WalletDAO) UpdateProfile(ctx context.Context, accountID, name, email string) (models.Account, error) {
+	return d.scanAccount(d.db.QueryRowContext(ctx, `
+		UPDATE accounts SET name = $2, email = $3
+		WHERE account_id = $1 AND `+activeAccountSQL+`
+		RETURNING account_id, name, email, password_hash, role, balance_points, created_at`,
+		accountID, name, email,
+	))
+}
+
+func (d *WalletDAO) UpdateProfileRole(ctx context.Context, accountID, name, email, role string) (models.Account, error) {
+	return d.scanAccount(d.db.QueryRowContext(ctx, `
+		UPDATE accounts SET name = $2, email = $3, role = $4
+		WHERE account_id = $1 AND `+activeAccountSQL+`
+		RETURNING account_id, name, email, password_hash, role, balance_points, created_at`,
+		accountID, name, email, role,
+	))
+}
+
+func (d *WalletDAO) SoftDeleteAccount(ctx context.Context, accountID, anonymizedEmail string) error {
+	res, err := d.db.ExecContext(ctx, `
+		UPDATE accounts SET deleted_at = now(), email = $2
+		WHERE account_id = $1 AND `+activeAccountSQL,
+		accountID, anonymizedEmail,
+	)
+	if err != nil {
+		return mapAccountInsertErr(err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("soft delete rows affected: %w", err)
+	}
+	if n == 0 {
+		return models.ErrNotFound
+	}
+	return nil
+}
+
+func (d *WalletDAO) CountActiveAdmins(ctx context.Context) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM accounts WHERE role = $1 AND `+activeAccountSQL,
+		models.RoleAdmin,
+	).Scan(&n)
+	return n, err
+}
+
+func (d *WalletDAO) scanAccount(row *sql.Row) (models.Account, error) {
 	var acct models.Account
 	var balance int64
-	err := d.db.QueryRowContext(ctx, `
-		SELECT account_id, name, email, password_hash, role, balance_points, created_at
-		FROM accounts WHERE account_id = $1`, accountID,
-	).Scan(&acct.AccountID, &acct.Name, &acct.Email, &acct.PasswordHash, &acct.Role, &balance, &acct.CreatedAt)
+	err := row.Scan(&acct.AccountID, &acct.Name, &acct.Email, &acct.PasswordHash, &acct.Role, &balance, &acct.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Account{}, models.ErrNotFound
 	}
 	if err != nil {
-		return models.Account{}, fmt.Errorf("get account: %w", err)
+		return models.Account{}, mapAccountInsertErr(err)
 	}
 	acct.BalancePoints = models.Points(balance)
 	return acct, nil
@@ -58,7 +138,7 @@ func (d *WalletDAO) GetAccount(ctx context.Context, accountID string) (models.Ac
 func (d *WalletDAO) GetBalance(ctx context.Context, accountID string) (models.Points, error) {
 	var balance int64
 	err := d.db.QueryRowContext(ctx,
-		`SELECT balance_points FROM accounts WHERE account_id = $1`, accountID,
+		`SELECT balance_points FROM accounts WHERE account_id = $1 AND `+activeAccountSQL, accountID,
 	).Scan(&balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, models.ErrNotFound
@@ -78,7 +158,7 @@ func (d *WalletDAO) ApplyTransaction(ctx context.Context, in models.TransactionI
 
 	var balance int64
 	err = tx.QueryRowContext(ctx,
-		`SELECT balance_points FROM accounts WHERE account_id = $1 FOR UPDATE`, in.AccountID,
+		`SELECT balance_points FROM accounts WHERE account_id = $1 AND `+activeAccountSQL+` FOR UPDATE`, in.AccountID,
 	).Scan(&balance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.LedgerEntry{}, models.ErrNotFound
@@ -137,7 +217,7 @@ func (d *WalletDAO) ApplyTransaction(ctx context.Context, in models.TransactionI
 	entry.BalanceAfterPoints = models.Points(balStored)
 
 	_, err = tx.ExecContext(ctx,
-		`UPDATE accounts SET balance_points = $1 WHERE account_id = $2`,
+		`UPDATE accounts SET balance_points = $1 WHERE account_id = $2 AND `+activeAccountSQL,
 		newBalance.Int64(), in.AccountID,
 	)
 	if err != nil {
@@ -152,8 +232,4 @@ func (d *WalletDAO) ApplyTransaction(ctx context.Context, in models.TransactionI
 
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "23505")
-}
-
-func isCheckViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "23514")
 }

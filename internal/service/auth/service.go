@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"time"
+
 	"golang.org/x/crypto/bcrypt"
 
 	"pointswallet/internal/dao"
@@ -14,9 +15,10 @@ import (
 )
 
 type Service struct {
-	auth      dao.AuthDAO
-	jwtSecret string
-	jwtTTL    time.Duration
+	auth                dao.AuthDAO
+	jwtSecret           string
+	jwtTTL              time.Duration
+	singleActiveSession bool
 }
 
 type LoginResult struct {
@@ -26,12 +28,17 @@ type LoginResult struct {
 }
 
 type ForgotPasswordResult struct {
-	Message   string
+	Message    string
 	ResetToken string // dev stub: returned in response
 }
 
-func NewService(auth dao.AuthDAO, jwtSecret string, jwtTTL time.Duration) *Service {
-	return &Service{auth: auth, jwtSecret: jwtSecret, jwtTTL: jwtTTL}
+func NewService(auth dao.AuthDAO, jwtSecret string, jwtTTL time.Duration, singleActiveSession bool) *Service {
+	return &Service{
+		auth:                auth,
+		jwtSecret:           jwtSecret,
+		jwtTTL:              jwtTTL,
+		singleActiveSession: singleActiveSession,
+	}
 }
 
 func (s *Service) Login(ctx context.Context, emailRaw, password string) (LoginResult, error) {
@@ -46,32 +53,38 @@ func (s *Service) Login(ctx context.Context, emailRaw, password string) (LoginRe
 	if err := bcrypt.CompareHashAndPassword([]byte(acct.PasswordHash), []byte(password)); err != nil {
 		return LoginResult{}, models.ErrUnauthorized
 	}
-	if err := s.auth.RevokeAllSessions(ctx, acct.AccountID); err != nil {
-		return LoginResult{}, fmt.Errorf("revoke sessions: %w", err)
+	if s.singleActiveSession {
+		if err := s.auth.RevokeAllTokens(ctx, acct.AccountID); err != nil {
+			return LoginResult{}, fmt.Errorf("revoke tokens: %w", err)
+		}
 	}
-	jti := newJTI()
-	sessionID := newJTI()
+	tokenID := newTokenID()
+	rowID := newTokenID()
 	expiresAt := time.Now().Add(s.jwtTTL)
-	if err := s.auth.CreateSession(ctx, sessionID, acct.AccountID, jti, expiresAt); err != nil {
-		return LoginResult{}, fmt.Errorf("create session: %w", err)
+	if err := s.auth.CreateToken(ctx, rowID, acct.AccountID, tokenID, expiresAt); err != nil {
+		return LoginResult{}, fmt.Errorf("create token: %w", err)
 	}
-	token, err := SignToken(s.jwtSecret, NewClaims(acct.AccountID, acct.Role, jti, s.jwtTTL))
+	accessToken, err := SignToken(s.jwtSecret, NewClaims(acct.AccountID, acct.Role, tokenID, s.jwtTTL))
 	if err != nil {
 		return LoginResult{}, err
 	}
-	return LoginResult{AccessToken: token, AccountID: acct.AccountID, Role: acct.Role}, nil
+	return LoginResult{AccessToken: accessToken, AccountID: acct.AccountID, Role: acct.Role}, nil
 }
 
-func (s *Service) Logout(ctx context.Context, jti string) error {
-	return s.auth.RevokeSession(ctx, jti)
+func (s *Service) Logout(ctx context.Context, tokenID string) error {
+	return s.auth.RevokeToken(ctx, tokenID)
 }
 
-func (s *Service) ValidateSession(ctx context.Context, claims Claims) error {
-	accountID, err := s.auth.GetActiveSession(ctx, claims.JTI)
+func (s *Service) ValidateToken(ctx context.Context, claims Claims) error {
+	accountID, err := s.auth.GetActiveToken(ctx, claims.JTI)
 	if err != nil {
 		return models.ErrUnauthorized
 	}
 	if accountID != claims.Sub {
+		return models.ErrUnauthorized
+	}
+	active, err := s.auth.IsAccountActive(ctx, claims.Sub)
+	if err != nil || !active {
 		return models.ErrUnauthorized
 	}
 	return nil
@@ -86,14 +99,14 @@ func (s *Service) ForgotPassword(ctx context.Context, emailRaw string) (ForgotPa
 	if err != nil {
 		return ForgotPasswordResult{Message: "If the email exists, a reset link was sent."}, nil
 	}
-	_ = s.auth.RevokeAllSessions(ctx, acct.AccountID)
-	token := newJTI()
-	hash := hashToken(token)
+	_ = s.auth.RevokeAllTokens(ctx, acct.AccountID)
+	raw := newTokenID()
+	hash := hashToken(raw)
 	expires := time.Now().Add(time.Hour)
-	_ = s.auth.CreateResetToken(ctx, newJTI(), acct.AccountID, hash, expires)
+	_ = s.auth.CreateResetToken(ctx, newTokenID(), acct.AccountID, hash, expires)
 	return ForgotPasswordResult{
 		Message:    "If the email exists, a reset link was sent.",
-		ResetToken: token,
+		ResetToken: raw,
 	}, nil
 }
 
@@ -113,7 +126,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	if err := s.auth.UpdatePassword(ctx, accountID, string(pwHash)); err != nil {
 		return err
 	}
-	return s.auth.RevokeAllSessions(ctx, accountID)
+	return s.auth.RevokeAllTokens(ctx, accountID)
 }
 
 func (s *Service) SeedAdmin(ctx context.Context, accountID, name, email, password string) error {
@@ -134,7 +147,7 @@ func (s *Service) SeedAdmin(ctx context.Context, accountID, name, email, passwor
 	})
 }
 
-func newJTI() string {
+func newTokenID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)

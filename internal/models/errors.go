@@ -15,8 +15,9 @@ var (
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	ErrNotFound            = errors.New("not found")
 	ErrUnauthorized        = errors.New("unauthorized")
-	ErrForbidden           = errors.New("forbidden")
 	ErrEmailAlreadyExists  = errors.New("email already exists")
+	ErrAccountAlreadyExists = errors.New("account already exists")
+	ErrLastAdmin            = errors.New("last admin")
 )
 
 type APIError struct {

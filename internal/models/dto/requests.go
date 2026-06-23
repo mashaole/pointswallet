@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -55,8 +56,12 @@ type LoginRequest struct {
 }
 
 func (r *LoginRequest) Sanitize() {
-	r.Email = strings.TrimSpace(r.Email)
 	r.Password = strings.TrimSpace(r.Password)
+	if e, err := models.NormalizeEmail(r.Email); err == nil {
+		r.Email = e
+	} else {
+		r.Email = strings.ToLower(strings.TrimSpace(r.Email))
+	}
 }
 
 func (r LoginRequest) Validate() error {
@@ -101,6 +106,59 @@ func (r ResetPasswordRequest) Validate() error {
 	return nil
 }
 
+type UpdateMemberAccountRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+func (r *UpdateMemberAccountRequest) Sanitize() {
+	r.Name = strings.TrimSpace(r.Name)
+	if e, err := models.NormalizeEmail(r.Email); err == nil {
+		r.Email = e
+	} else {
+		r.Email = strings.ToLower(strings.TrimSpace(r.Email))
+	}
+}
+
+func (r UpdateMemberAccountRequest) Validate() error {
+	if r.Name == "" {
+		return models.ErrFieldRequired("name")
+	}
+	if err := models.ValidateEmail(r.Email); err != nil {
+		return err
+	}
+	return nil
+}
+
+type UpdateAdminAccountRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+func (r *UpdateAdminAccountRequest) Sanitize() {
+	r.Name = strings.TrimSpace(r.Name)
+	r.Role = strings.ToLower(strings.TrimSpace(r.Role))
+	if e, err := models.NormalizeEmail(r.Email); err == nil {
+		r.Email = e
+	} else {
+		r.Email = strings.ToLower(strings.TrimSpace(r.Email))
+	}
+}
+
+func (r UpdateAdminAccountRequest) Validate() error {
+	if r.Name == "" {
+		return models.ErrFieldRequired("name")
+	}
+	if err := models.ValidateEmail(r.Email); err != nil {
+		return err
+	}
+	if r.Role != models.RoleMember && r.Role != models.RoleAdmin {
+		return models.ErrInvalidRole
+	}
+	return nil
+}
+
 type TransactionRequest struct {
 	Ref        string `json:"ref"`
 	Kind       string `json:"kind"`
@@ -114,9 +172,9 @@ func (r *TransactionRequest) Sanitize() {
 	r.OccurredAt = strings.TrimSpace(r.OccurredAt)
 }
 
-func (r TransactionRequest) Validate() error {
-	if r.Ref == "" {
-		return models.ErrFieldRequired("ref")
+func (r TransactionRequest) ValidateWithResolvedRef(ref string) error {
+	if strings.TrimSpace(ref) == "" {
+		return models.ErrFieldRequired("ref or Idempotency-Key header")
 	}
 	if r.Kind != models.KindEarn && r.Kind != models.KindSpend && r.Kind != models.KindAdjustment {
 		return models.ErrInvalidKind
@@ -131,6 +189,23 @@ func (r TransactionRequest) Validate() error {
 		return models.ErrFieldRequired("occurred_at")
 	}
 	return nil
+}
+
+// ResolveTransactionRef picks the ledger ref from Idempotency-Key header and/or JSON ref.
+// Header wins when only one is set; when both are set they must match.
+func ResolveTransactionRef(headerKey, bodyRef string) (string, error) {
+	headerKey = strings.TrimSpace(headerKey)
+	bodyRef = strings.TrimSpace(bodyRef)
+	if headerKey != "" && bodyRef != "" && headerKey != bodyRef {
+		return "", fmt.Errorf("%w: ref and Idempotency-Key must match when both are provided", models.ErrValidation)
+	}
+	if headerKey != "" {
+		return headerKey, nil
+	}
+	if bodyRef != "" {
+		return bodyRef, nil
+	}
+	return "", models.ErrFieldRequired("ref or Idempotency-Key header")
 }
 
 func (r TransactionRequest) OccurredTime() (time.Time, error) {

@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -32,12 +35,26 @@ func OpenPool(cfg config.Config) (*sql.DB, error) {
 }
 
 func RunMigrations(db *sql.DB) error {
-	sqlBytes, err := os.ReadFile("migrations/001_init.sql")
+	entries, err := os.ReadDir("migrations")
 	if err != nil {
-		return fmt.Errorf("read migrations: %w", err)
+		return fmt.Errorf("read migrations dir: %w", err)
 	}
-	if _, err := db.Exec(string(sqlBytes)); err != nil {
-		return fmt.Errorf("run migrations: %w", err)
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		files = append(files, filepath.Join("migrations", e.Name()))
+	}
+	sort.Strings(files)
+	for _, path := range files {
+		sqlBytes, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", path, err)
+		}
+		if _, err := db.Exec(string(sqlBytes)); err != nil {
+			return fmt.Errorf("run migration %s: %w", path, err)
+		}
 	}
 	return nil
 }

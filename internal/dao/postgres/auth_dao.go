@@ -23,7 +23,7 @@ func (d *AuthDAO) GetAccountByEmail(ctx context.Context, email string) (models.A
 	var balance int64
 	err := d.db.QueryRowContext(ctx, `
 		SELECT account_id, name, email, password_hash, role, balance_points, created_at
-		FROM accounts WHERE email = $1`, email,
+		FROM accounts WHERE email = $1 AND deleted_at IS NULL`, email,
 	).Scan(&acct.AccountID, &acct.Name, &acct.Email, &acct.PasswordHash, &acct.Role, &balance, &acct.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.Account{}, models.ErrNotFound
@@ -35,27 +35,27 @@ func (d *AuthDAO) GetAccountByEmail(ctx context.Context, email string) (models.A
 	return acct, nil
 }
 
-func (d *AuthDAO) RevokeAllSessions(ctx context.Context, accountID string) error {
+func (d *AuthDAO) RevokeAllTokens(ctx context.Context, accountID string) error {
 	_, err := d.db.ExecContext(ctx, `
-		UPDATE sessions SET revoked_at = now()
+		UPDATE auth_tokens SET revoked_at = now()
 		WHERE account_id = $1 AND revoked_at IS NULL`, accountID,
 	)
 	return err
 }
 
-func (d *AuthDAO) CreateSession(ctx context.Context, sessionID, accountID, jti string, expiresAt time.Time) error {
+func (d *AuthDAO) CreateToken(ctx context.Context, id, accountID, token string, expiresAt time.Time) error {
 	_, err := d.db.ExecContext(ctx, `
-		INSERT INTO sessions (id, account_id, jti, expires_at)
-		VALUES ($1, $2, $3, $4)`, sessionID, accountID, jti, expiresAt,
+		INSERT INTO auth_tokens (id, account_id, token, expires_at)
+		VALUES ($1, $2, $3, $4)`, id, accountID, token, expiresAt,
 	)
 	return err
 }
 
-func (d *AuthDAO) GetActiveSession(ctx context.Context, jti string) (string, error) {
+func (d *AuthDAO) GetActiveToken(ctx context.Context, token string) (string, error) {
 	var accountID string
 	err := d.db.QueryRowContext(ctx, `
-		SELECT account_id FROM sessions
-		WHERE jti = $1 AND revoked_at IS NULL AND expires_at > now()`, jti,
+		SELECT account_id FROM auth_tokens
+		WHERE token = $1 AND revoked_at IS NULL AND expires_at > now()`, token,
 	).Scan(&accountID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", models.ErrUnauthorized
@@ -63,10 +63,10 @@ func (d *AuthDAO) GetActiveSession(ctx context.Context, jti string) (string, err
 	return accountID, err
 }
 
-func (d *AuthDAO) RevokeSession(ctx context.Context, jti string) error {
+func (d *AuthDAO) RevokeToken(ctx context.Context, token string) error {
 	_, err := d.db.ExecContext(ctx, `
-		UPDATE sessions SET revoked_at = now()
-		WHERE jti = $1 AND revoked_at IS NULL`, jti,
+		UPDATE auth_tokens SET revoked_at = now()
+		WHERE token = $1 AND revoked_at IS NULL`, token,
 	)
 	return err
 }
@@ -95,7 +95,7 @@ func (d *AuthDAO) UseResetToken(ctx context.Context, tokenHash string) (string, 
 
 func (d *AuthDAO) UpdatePassword(ctx context.Context, accountID, passwordHash string) error {
 	_, err := d.db.ExecContext(ctx, `
-		UPDATE accounts SET password_hash = $1 WHERE account_id = $2`, passwordHash, accountID,
+		UPDATE accounts SET password_hash = $1 WHERE account_id = $2 AND deleted_at IS NULL`, passwordHash, accountID,
 	)
 	return err
 }
@@ -118,4 +118,14 @@ func (d *AuthDAO) SeedAdminIfMissing(ctx context.Context, acct models.Account) e
 		acct.AccountID, acct.Name, acct.Email, acct.PasswordHash, acct.Role,
 	)
 	return err
+}
+
+func (d *AuthDAO) IsAccountActive(ctx context.Context, accountID string) (bool, error) {
+	var active bool
+	err := d.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM accounts WHERE account_id = $1 AND deleted_at IS NULL
+		)`, accountID,
+	).Scan(&active)
+	return active, err
 }
