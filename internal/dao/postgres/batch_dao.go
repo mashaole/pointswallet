@@ -91,11 +91,3 @@ func (d *BatchDAO) RecoverStaleJobs(ctx context.Context) error {
 	)
 	return err
 }
-
-func (d *BatchDAO) FailJob(ctx context.Context, id, message string) error {
-	_, err := d.db.ExecContext(ctx, `
-		UPDATE batch_jobs SET status = $1, error_message = $2, completed_at = now()
-		WHERE id = $3`, models.BatchStatusFailed, message, id,
-	)
-	return err
-}

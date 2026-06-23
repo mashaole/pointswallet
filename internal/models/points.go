@@ -17,18 +17,10 @@ func (p Points) Int64() int64 {
 	return int64(p)
 }
 
-func (p Points) IsZero() bool {
-	return p == 0
-}
-
 func (p Points) Add(delta Points) Points {
 	return p + delta
 }
 
 func (p Points) Sub(delta Points) Points {
 	return p - delta
-}
-
-func (p Points) Gte(other Points) bool {
-	return p >= other
 }

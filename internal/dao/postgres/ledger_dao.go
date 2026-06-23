@@ -53,11 +53,3 @@ func (d *LedgerDAO) ListByAccount(ctx context.Context, accountID string, limit, 
 	}
 	return entries, total, rows.Err()
 }
-
-func (d *LedgerDAO) RefExists(ctx context.Context, ref string) (bool, error) {
-	var exists bool
-	err := d.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE ref = $1)`, ref,
-	).Scan(&exists)
-	return exists, err
-}

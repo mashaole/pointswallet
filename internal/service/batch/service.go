@@ -34,8 +34,8 @@ func (s *Service) RecoverStaleJobs(ctx context.Context) error {
 	return s.batch.RecoverStaleJobs(ctx)
 }
 
-func (s *Service) CreateJob(ctx context.Context, jobID string, rows []models.BatchRow) error {
-	return s.batch.CreateJob(ctx, jobID, len(rows))
+func (s *Service) CreateJob(ctx context.Context, jobID string, totalRows int) error {
+	return s.batch.CreateJob(ctx, jobID, totalRows)
 }
 
 func (s *Service) GetJob(ctx context.Context, id string) (dao.BatchJob, error) {
