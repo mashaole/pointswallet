@@ -14,7 +14,8 @@
     { "key": "memberToken", "value": "" },
     { "key": "memberAccountId", "value": "member-1" },
     { "key": "batchJobId", "value": "" },
-    { "key": "resetToken", "value": "" }
+    { "key": "resetToken", "value": "" },
+    { "key": "idempotencyKey", "value": "" }
   ],
   "item": [
     {
@@ -75,13 +76,25 @@
           }
         },
         {
-          "name": "Logout",
+          "name": "Logout (Admin)",
           "request": {
             "method": "POST",
             "header": [
               { "key": "Authorization", "value": "Bearer {{adminToken}}" }
             ],
-            "url": "{{baseUrl}}/auth/logout"
+            "url": "{{baseUrl}}/auth/logout",
+            "description": "Same endpoint for all roles. Revokes the bearer token sent in Authorization."
+          }
+        },
+        {
+          "name": "Logout (Member)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "url": "{{baseUrl}}/auth/logout",
+            "description": "Same endpoint as admin logout — use the member access token."
           }
         },
         {
@@ -158,6 +171,24 @@
           }
         },
         {
+          "name": "List Accounts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/accounts?limit=20&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["accounts"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
           "name": "Get Account",
           "request": {
             "method": "GET",
@@ -165,6 +196,33 @@
               { "key": "Authorization", "value": "Bearer {{adminToken}}" }
             ],
             "url": "{{baseUrl}}/accounts/{{memberAccountId}}"
+          }
+        },
+        {
+          "name": "Update Account (Admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rina Updated\",\n  \"email\": \"{{memberEmail}}\",\n  \"role\": \"member\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}",
+            "description": "Admin can update name, email, and role."
+          }
+        },
+        {
+          "name": "Delete Account (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+            ],
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}",
+            "description": "Soft delete — ledger and transactions are preserved. Returns 204."
           }
         },
         {
@@ -211,31 +269,72 @@
           }
         },
         {
+          "name": "Update My Account",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rina\",\n  \"email\": \"{{memberEmail}}\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts/me",
+            "description": "Member can update name and email only."
+          }
+        },
+        {
+          "name": "Delete My Account",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+            ],
+            "url": "{{baseUrl}}/accounts/me",
+            "description": "Soft delete own account. Returns 204; tokens revoked."
+          }
+        },
+        {
           "name": "Earn Points",
           "request": {
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" },
+              { "key": "Idempotency-Key", "value": "tx-001", "description": "Fixed key so Duplicate Ref test can replay the same idempotency key" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ref\": \"tx-001\",\n  \"kind\": \"earn\",\n  \"points\": 150,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"earn\",\n  \"points\": 150,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
-            "url": "{{baseUrl}}/transactions"
+            "url": "{{baseUrl}}/transactions",
+            "description": "Idempotency via Idempotency-Key header (no body ref). Fixed tx-001 for duplicate testing."
           }
         },
         {
           "name": "Spend Points",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ref\": \"tx-002\",\n  \"kind\": \"spend\",\n  \"points\": 50,\n  \"occurred_at\": \"2024-06-01T11:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"spend\",\n  \"points\": 50,\n  \"occurred_at\": \"2024-06-01T11:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
@@ -265,17 +364,30 @@
       "item": [
         {
           "name": "Admin Adjust Account",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ref\": \"tx-admin-001\",\n  \"kind\": \"earn\",\n  \"points\": 25,\n  \"occurred_at\": \"2024-06-01T12:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"adjustment\",\n  \"points\": 25,\n  \"occurred_at\": \"2024-06-01T12:00:00Z\"\n}"
             },
-            "url": "{{baseUrl}}/accounts/{{memberAccountId}}/transactions"
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}/transactions",
+            "description": "Admin adjust uses kind adjustment. Response and ledger include actor_account_id (the admin)."
           }
         }
       ]
@@ -354,36 +466,83 @@
       "item": [
         {
           "name": "Duplicate Ref (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 409 conflict', () => pm.response.to.have.status(409));",
+                  "const j = pm.response.json();",
+                  "pm.test('duplicate_ref error code', () => {",
+                  "  pm.expect(j.error.code).to.eql('duplicate_ref');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" },
+              { "key": "Idempotency-Key", "value": "tx-001", "description": "Same key as Earn Points → duplicate_ref" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ref\": \"tx-001\",\n  \"kind\": \"earn\",\n  \"points\": 10,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"earn\",\n  \"points\": 10,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
         },
         {
           "name": "Insufficient Balance (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 422 unprocessable', () => pm.response.to.have.status(422));",
+                  "const j = pm.response.json();",
+                  "pm.test('insufficient_balance error code', () => {",
+                  "  pm.expect(j.error.code).to.eql('insufficient_balance');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
               { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              { "key": "Authorization", "value": "Bearer {{memberToken}}" },
+              { "key": "Idempotency-Key", "value": "tx-overdraw" }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ref\": \"tx-overdraw\",\n  \"kind\": \"spend\",\n  \"points\": 999999,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"spend\",\n  \"points\": 999999,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
         },
         {
           "name": "Member Create Account (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 403 forbidden', () => pm.response.to.have.status(403));",
+                  "const j = pm.response.json();",
+                  "pm.test('forbidden error code', () => {",
+                  "  pm.expect(j.error.code).to.eql('forbidden');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [
