@@ -13,17 +13,17 @@ CREATE TABLE IF NOT EXISTS accounts (
     )
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-    id         UUID PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES accounts(account_id),
-    jti        TEXT NOT NULL UNIQUE,
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    id           UUID PRIMARY KEY,
+    account_id   TEXT NOT NULL REFERENCES accounts(account_id),
+    token        TEXT NOT NULL UNIQUE,
+    expires_at   TIMESTAMPTZ NOT NULL,
+    revoked_at   TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_account_id ON sessions (account_id);
-CREATE INDEX IF NOT EXISTS idx_sessions_jti ON sessions (jti);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_account_id ON auth_tokens (account_id);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON auth_tokens (token);
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
     id         UUID PRIMARY KEY,
