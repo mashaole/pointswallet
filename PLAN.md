@@ -469,57 +469,63 @@ erDiagram
   batch_jobs ||--o{ audit_events : produces
 
   accounts {
-    text account_id PK
-    text email UK_active
-    text name
-    text role
-    text password_hash
-    bigint balance_points
-    timestamptz created_at
-    timestamptz deleted_at
+    string account_id
+    string email
+    string name
+    string role
+    string password_hash
+    int balance_points
+    datetime created_at
+    datetime deleted_at
   }
   ledger_entries {
-    bigserial id PK
-    text ref UK
-    text account_id FK
-    text kind
-    bigint points
-    bigint balance_after_points
-    timestamptz occurred_at
-    timestamptz recorded_at
-    text actor_account_id
-    text source
+    int id
+    string ref
+    string account_id
+    string kind
+    int points
+    int balance_after_points
+    datetime occurred_at
+    datetime recorded_at
+    string actor_account_id
+    string source
   }
   auth_tokens {
-    uuid id PK
-    text account_id FK
-    text token UK
-    timestamptz expires_at
-    timestamptz revoked_at
-    timestamptz created_at
+    string id
+    string account_id
+    string token
+    datetime expires_at
+    datetime revoked_at
+    datetime created_at
   }
   audit_events {
-    bigserial id PK
-    uuid batch_id FK
-    text ref
-    text account_id
-    text status
-    text reason
-    timestamptz created_at
+    int id
+    string batch_id
+    string ref
+    string account_id
+    string status
+    string reason
+    datetime created_at
   }
   batch_jobs {
-    uuid id PK
-    text status
+    string id
+    string status
     int total_rows
     int accepted_count
     int rejected_count
     int duplicate_count
-    timestamptz created_at
-    timestamptz started_at
-    timestamptz completed_at
-    text error_message
+    datetime created_at
+    datetime started_at
+    datetime completed_at
+    string error_message
   }
 ```
+
+**Keys & indexes (not shown in diagram — Mermaid allows only `type name` per line):**
+- `accounts.account_id` PK; partial unique on `email` where `deleted_at IS NULL`
+- `ledger_entries.ref` UNIQUE globally; `account_id` FK
+- `auth_tokens.token` UNIQUE (JWT `jti`); `account_id` FK
+- `audit_events.batch_id` FK → `batch_jobs.id`
 
 `audit_events.status`: `accepted` | `rejected`. `reason`: e.g. `ok`, `duplicate_ref`, `insufficient_balance`, `validation_error`.
 
