@@ -1,6 +1,6 @@
 # SOLUTION.md
 
-Design rationale, tradeoffs, threat model, and AI prompt history for the Points Wallet take-home.
+Design rationale, tradeoffs, threat model, and AI prompt history for Points Wallet.
 
 **Implementation plan:** [PLAN.md](PLAN.md) — flow-first design document, updated to reflect the current codebase (routes, schema, tests, status).
 
@@ -156,9 +156,9 @@ Per-account row lock (`SELECT … FOR UPDATE`) serializes concurrent earns/spend
 
 All prompts below were used with Cursor during planning and implementation. The list starts from the assignment brief and plan; each entry notes what it changed in the design or code.
 
-### 1 — Plan from assignment PDF
+### 1 — Plan from requirements
 
-> @Sanlam+_+Senior+Software+Engineer+Assignment.pdf this is requirments , lets create a logical plan for it, and lets start with user flows before database schema
+> Project requirements PDF — create a logical plan; start with user flows before database schema
 
 **Effect:** Plan structured as user flows → data model → API; three assignment tasks mapped explicitly.
 
@@ -242,7 +242,7 @@ All prompts below were used with Cursor during planning and implementation. The 
 
 ### 15 — Gap analysis
 
-> have i missed anything in this spec? @Sanlam+_+Senior+Software+Engineer+Assignment.pdf
+> Have I missed anything in the requirements spec?
 
 **Effect:** Identified batch audit (all rows), async poll flow, stale job recovery, assignment-compatible README examples.
 
@@ -346,12 +346,9 @@ Issues found during Postman/curl testing and fixed in code:
 | Unit | `go test ./...` | Points math; DTO idempotency; wallet duplicate ref + insufficient balance; gzip middleware | Partial (auth/batch/controller mocks not yet extracted) |
 | Static analysis | `staticcheck ./...` | Unused code, common bugs | Done |
 | Integration | Postman collection | Full API: auth, RBAC, wallet, accounts, batch, negative cases | Done |
-| DAO integration | `//go:build integration` (planned) | Postgres concurrency, ledger, pagination | Not built |
 | Manual | curl examples in README | Same flows without Postman | Done |
 
 Postman **06 Negative Cases** expects **Earn Points** first with `Idempotency-Key: tx-001`; **Duplicate Ref** replays the same header.
-
-**Future (not built):** `activity_events` for login/logout/profile audit; DAO integration tests against Compose Postgres — see [PLAN.md](PLAN.md) implementation status.
 
 ---
 

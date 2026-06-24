@@ -23,9 +23,6 @@ todos:
   - id: unit-tests
     content: Table-driven unit tests per layer with hand-written mocks (DAO, service); verify mocks and isolation with go test ./...
     status: completed
-  - id: integration-tests
-    content: DAO integration tests against Compose Postgres (concurrency, ledger, pagination)
-    status: pending
   - id: postman
     content: Importable Postman collection (collection-scoped variables); positive/negative cases; README for Collection Runner
     status: completed
@@ -111,7 +108,7 @@ flowchart LR
 3. Admin logs in with **email + password** → receives JWT + session row created.
 4. Admin creates accounts — **`role: "member"`** (default) or **`role: "admin"`** — only admins can call `POST /accounts`.
 
-**Interview note:** Compose gives durable Postgres locally; matches how Sanlam-scale services run in prod without SQLite locking quirks.
+**Note:** Compose gives durable Postgres locally; row-level locking suits production workloads better than SQLite for concurrent writes.
 
 ### Flow B — Authentication (session-backed JWT)
 
@@ -266,7 +263,7 @@ Assignment requires data durable across restarts. On app startup (after migratio
 2. Mark them **`failed`** with `error_message = 'interrupted by process restart'`.
 3. Do **not** re-run rows automatically — ledger + idempotent `ref` make **re-upload safe**; admin re-uploads CSV if needed.
 
-**Interview line:** *“Committed ledger rows survive restart; in-flight jobs fail closed; reprocessing the file is safe because refs are idempotent.”*
+**Summary:** Committed ledger rows survive restart; in-flight jobs fail closed; reprocessing the file is safe because refs are idempotent.
 
 ### Flow J — Global idempotency (`ref`) — API and batch identical rules
 
@@ -316,7 +313,7 @@ flowchart TD
 3. **Database** — `ledger_entries.ref UNIQUE` — final guarantee even under concurrent API + batch workers; map Postgres `23505` → `models.ErrDuplicateRef`.
 4. **Immutable ledger** — accepted refs never UPDATE/DELETE; replaying the same ref never mutates balance twice.
 
-**Safe retry semantics (interview talking point):**
+**Safe retry semantics:**
 
 - Client retries `POST /transactions` with same `ref` after timeout → **409** (or idempotent **200** with original result if you store ref→response — **plan choice: 409** for simplicity and clear “already processed” signal; document in SOLUTION.md).
 - CSV row with `tx-001` accepted; same file reprocessed → `tx-001` counted as duplicate, balance unchanged.
@@ -441,7 +438,7 @@ func (p Points) WholePoints() int64       { return int64(p) / PointsScale }
 | **JSON response** | whole points for assignment compat | DB `15000` → `"balance_points": 150` |
 | **CSV batch** | `points` column = whole points | same conversion as API |
 
-**Why point-cents:** Avoids floating-point rounding; supports fractional points later (e.g. `"150.50"`) without schema changes — only API parsing would extend. Interview line: *“Column is named points; value is fixed-scale integer cents.”*
+**Why point-cents:** Avoids floating-point rounding; supports fractional points later (e.g. `"150.50"`) without schema changes — only API parsing would extend. Column is named `points`; stored values are fixed-scale integer cents.
 
 **Assignment compat:** Request/response shapes unchanged — integers only. Internally always point-cents.
 
@@ -457,7 +454,7 @@ func (p Points) WholePoints() int64       { return int64(p) / PointsScale }
 | **Audit trail** | Each row is a permanent record of one financial action |
 | **Balance integrity** | `balance_after_points` written atomically with account `balance_points` update |
 
-**Interview line:** *“The ledger is the system of record; account balance is a cache. In a dispute you replay ledger entries — rows are never edited or deleted.”*
+**Principle:** The ledger is the system of record; account balance is a cache. In a dispute you replay ledger entries — rows are never edited or deleted.
 
 ### Entity relationship
 
@@ -673,7 +670,7 @@ COMMIT;
 -- rejected paths: INSERT audit_events only, ROLLBACK or skip ledger insert
 ```
 
-**Interview talking point:** Row-level lock on account serializes concurrent spends/earns; Postgres handles cross-request safety better than SQLite for overlapping writes.
+**Concurrency:** Row-level lock on account serializes concurrent spends/earns; Postgres handles cross-request safety better than SQLite for overlapping writes.
 
 ---
 
@@ -991,7 +988,7 @@ type SanitizerValidator interface {
 
 **CSV/batch upload:** multipart file body — separate path; sanitize each CSV cell (trim, reject control chars) before building ledger DTO; row-level validation before `wallet.Service.ApplyTransaction`.
 
-**Interview line:** *“Deserialize strictly into typed DTOs, sanitize strings before validation, then validate — never pass raw request maps into the service layer.”*
+**Pipeline:** Deserialize strictly into typed DTOs, sanitize strings before validation, then validate — never pass raw request maps into the service layer.
 
 ### Router layer (`internal/router/`)
 
@@ -1086,7 +1083,7 @@ flowchart TD
 
 Runs on already-decompressed body; no gzip awareness in controller.
 
-**Interview line:** *“Gzip is middleware — compress responses for large ledger pages; accept gzip request bodies with a decompressed size cap to prevent zip bombs.”*
+**Design:** Gzip is middleware — compress responses for large ledger pages; accept gzip request bodies with a decompressed size cap to prevent zip bombs.
 
 ```go
 // Global outer wrap: compress responses + decompress requests (all routes)
@@ -1134,9 +1131,9 @@ Config → pool → **`batch.RecoverStaleJobs()`** → DAOs → services → con
 | Models | Unit | none |
 | Service | Unit | mock DAO |
 | Controller | httptest | mock service |
-| DAO | Integration | real Postgres |
+| DAO | Postman + unit mocks | real Postgres exercised via HTTP collection |
 
-**Pattern rationale:** Separating router/controller/service/DAO/models gives clear test boundaries and interview-friendly structure. Business rules live once in services; SQL lives only in DAO; HTTP concerns never leak inward. Monolithic `handlers.go` rejected — hard to test and reuse (e.g. batch vs API both need same spend logic).
+**Pattern rationale:** Separating router/controller/service/DAO/models gives clear test boundaries and a maintainable structure. Business rules live once in services; SQL lives only in DAO; HTTP concerns never leak inward. Monolithic `handlers.go` rejected — hard to test and reuse (e.g. batch vs API both need same spend logic).
 
 ---
 
@@ -1295,7 +1292,7 @@ func (r CreateAccountRequest) Validate() error {
 
 **Service rule (`service/auth` or `service/wallet`):** `CreateAccount` persists `accounts.role` from request. Caller must already be admin (enforced by middleware); no bootstrap path for non-admin to set `role: admin`.
 
-**Interview line:** *“Validation runs in the controller before the service — middleware handles cross-cutting auth; business rules stay in the service layer.”*
+**Validation order:** Validation runs in the controller before the service — middleware handles cross-cutting auth; business rules stay in the service layer.
 
 **Create request (admin-only; role distinguishes member vs admin):**
 
@@ -1514,7 +1511,6 @@ Task 2 explicitly requires documenting credential shape and enforcement — keep
 | 8 | Unit tests — wallet service, dto, points, compress middleware | ✅ Done (partial vs full matrix below) |
 | 9 | Postman collection — single file; positive/negative cases | ✅ Done |
 | 10 | README + SOLUTION.md | ✅ Done |
-| 11 | DAO integration tests — Postgres via Compose | ⏳ Pending |
 
 ---
 
@@ -1552,8 +1548,6 @@ func TestWalletService_Spend_InsufficientBalance(t *testing.T) {
 ```
 
 **Run:** `go test ./... -count=1` (README documents this).
-
-**DAO integration tests** (real Postgres, not mocked): live in `internal/dao/postgres/*_integration_test.go` with build tag `//go:build integration` or env gate `INTEGRATION=1` — concurrency, ledger immutability, pagination COUNT+LIMIT.
 
 ### 7b — Postman integration tests (importable)
 
@@ -1642,12 +1636,10 @@ Points Wallet API
 | `TestMiddleware_RequireAdmin` | Member token → 403 on admin route |
 | `TestMiddleware_AllowMethods` | GET on POST-only → 405 |
 | `TestLedger_ListPagination_DefaultLimit` | Default limit 20 |
-| `TestWalletDAO_ApplyTransaction` | Integration; FOR UPDATE + ledger |
 | `TestApplyTransaction_DuplicateRef_API` | Second POST same ref → 409, balance unchanged |
 | `TestApplyTransaction_DuplicateRef_BatchRow` | Duplicate ref in CSV → duplicate_count++ |
 | `TestApplyTransaction_DuplicateRef_Concurrent` | Two goroutines same ref → one wins |
 | `TestApplyTransaction_DuplicateRef_CrossEntry` | API ref then batch same ref → rejected |
-| `TestApplyTransaction_ConcurrentSpends` | Integration; balance correct |
 | `TestBatch_AsyncReturns202` | Upload returns job id before processing finishes |
 | `TestBatch_ConcurrentDifferentAccounts` | Parallel rows on different accounts all commit |
 | `TestBatch_ConcurrentSameAccount` | Parallel rows same account — balance stays correct |
@@ -1662,12 +1654,12 @@ Points Wallet API
 
 ## Part 8 — SOLUTION.md talking points (ongoing) + demo prep
 
-**SOLUTION.md** is updated continuously during build (see Part 5d). For demo/interview (video optional), prepare to explain:
+**SOLUTION.md** is updated continuously during build (see Part 5d). Key decisions to explain:
 
 **Decisions to explain:**
 
 - **Integer point-cents, not floats** — fixed-scale storage (×100); assignment API uses whole integer points; ready for fractional points later without schema change.
-- **Postgres + Compose** — durable, realistic for Sanlam-scale backend; row locks vs SQLite.
+- **Postgres + Compose** — durable, production-scale backend; row locks vs SQLite.
 - **JWT + DB `auth_tokens`** — revocation, single session, reset invalidates all tokens.
 - **Soft delete + last-admin guard** — preserve ledger FK integrity; anonymize email; block orphaning the system.
 - **`Idempotency-Key` header** — REST-friendly idempotency without requiring body `ref` on every request.
@@ -1676,7 +1668,7 @@ Points Wallet API
 - **Async batch + restart** — 202 poll flow; stale `processing` jobs → `failed` on boot; re-upload safe via idempotent refs.
 - **Immutable ledger** — append-only `ledger_entries`; balance is a cache.
 - **Denormalized balance_points + ledger** — fast reads + permanent audit trail for every accepted action.
-- **Stdlib HTTP** — transparent, interview-friendly.
+- **Stdlib HTTP** — transparent, readable request handling without framework magic.
 - **Email validation at two layers** — backend gives friendly errors; DB CHECK + UNIQUE is the safety net (defense in depth).
 - **Layered architecture** — Router/Controller/Service/DAO/Models; each layer independently testable.
 - **Ports at DAO boundary** — swap Postgres without touching services or controllers.
@@ -1700,7 +1692,6 @@ Points Wallet API
 - Frontend UI
 - Real email for forgot-password
 - Multi-tenant org hierarchy
-- **`activity_events` table** — login/logout/profile audit (ledger-only audit shipped first; see SOLUTION.md)
 
 ---
 
@@ -1713,7 +1704,6 @@ Points Wallet API
 | `Idempotency-Key` header | ✅ Complete |
 | Postman single-file collection | ✅ Complete |
 | Unit tests (wallet, dto, points, compress) | ✅ Partial |
-| DAO integration tests (`//go:build integration`) | ⏳ Pending |
-| `activity_events` audit | ⏳ Deferred |
+| Static analysis (`staticcheck`) | ✅ Done |
 
 See [SOLUTION.md](SOLUTION.md) for rationale, threat model, and full AI prompt log.

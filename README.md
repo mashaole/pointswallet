@@ -1,6 +1,6 @@
 # Points Wallet
 
-Loyalty points wallet service (Go + PostgreSQL) for the take-home assignment.
+Loyalty points wallet service (Go + PostgreSQL).
 
 ## Features
 
