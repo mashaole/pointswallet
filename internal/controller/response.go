@@ -57,10 +57,13 @@ func MapDomainError(err error) models.APIError {
 		return models.NewAPIError("invalid_role", "Role must be member or admin", http.StatusBadRequest)
 	case errors.Is(err, models.ErrUnauthorized):
 		return models.NewAPIError("unauthorized", "Unauthorized", http.StatusUnauthorized)
+	case errors.Is(err, models.ErrForbidden):
+		return models.NewAPIError("forbidden", "Forbidden", http.StatusForbidden)
 	case errors.Is(err, models.ErrNotFound):
 		return models.NewAPIError("not_found", "Resource not found", http.StatusNotFound)
 	case errors.Is(err, models.ErrValidation), errors.Is(err, models.ErrInvalidEmail),
-		errors.Is(err, models.ErrInvalidKind), errors.Is(err, models.ErrInvalidPoints):
+		errors.Is(err, models.ErrInvalidKind), errors.Is(err, models.ErrInvalidPoints),
+		errors.Is(err, models.ErrInvalidDirection):
 		return models.NewAPIError("validation_error", err.Error(), http.StatusBadRequest)
 	default:
 		return models.NewAPIError("internal_error", "Internal server error", http.StatusInternalServerError)

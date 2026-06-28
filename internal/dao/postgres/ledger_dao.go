@@ -25,7 +25,7 @@ func (d *LedgerDAO) ListByAccount(ctx context.Context, accountID string, limit, 
 	}
 
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, ref, account_id, kind, points, balance_after_points,
+		SELECT id, ref, account_id, kind, direction, points, balance_after_points,
 		       occurred_at, recorded_at, actor_account_id, source
 		FROM ledger_entries
 		WHERE account_id = $1
@@ -42,7 +42,7 @@ func (d *LedgerDAO) ListByAccount(ctx context.Context, accountID string, limit, 
 		var e models.LedgerEntry
 		var pts, bal int64
 		if err := rows.Scan(
-			&e.ID, &e.Ref, &e.AccountID, &e.Kind, &pts, &bal,
+			&e.ID, &e.Ref, &e.AccountID, &e.Kind, &e.Direction, &pts, &bal,
 			&e.OccurredAt, &e.RecordedAt, &e.ActorAccountID, &e.Source,
 		); err != nil {
 			return nil, 0, fmt.Errorf("scan ledger: %w", err)

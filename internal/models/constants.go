@@ -6,9 +6,14 @@ const (
 )
 
 const (
-	KindEarn        = "earn"
-	KindSpend       = "spend"
-	KindAdjustment  = "adjustment"
+	KindEarn       = "earn"
+	KindSpend      = "spend"
+	KindAdjustment = "adjustment"
+)
+
+const (
+	DirectionCredit = "credit"
+	DirectionDebit  = "debit"
 )
 
 const (

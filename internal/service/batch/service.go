@@ -82,6 +82,7 @@ func (s *Service) processRow(ctx context.Context, jobID string, row models.Batch
 		Ref:            row.Ref,
 		AccountID:      row.AccountID,
 		Kind:           row.Kind,
+		Direction:      row.Direction,
 		WholePoints:    row.WholePoints,
 		OccurredAt:     row.OccurredAt,
 		ActorAccountID: actorAccountID,
@@ -106,7 +107,8 @@ func auditReason(err error) string {
 		return "insufficient_balance"
 	case errors.Is(err, models.ErrNotFound):
 		return "account_not_found"
-	case errors.Is(err, models.ErrInvalidKind), errors.Is(err, models.ErrInvalidPoints):
+	case errors.Is(err, models.ErrInvalidKind), errors.Is(err, models.ErrInvalidPoints),
+		errors.Is(err, models.ErrInvalidDirection):
 		return "validation_error"
 	default:
 		return "internal_error"
@@ -129,6 +131,10 @@ func ParseCSV(r io.Reader) ([]models.BatchRow, error) {
 			return nil, fmt.Errorf("%w: invalid csv header", models.ErrValidation)
 		}
 	}
+	hasDirection := len(header) >= 6 && strings.EqualFold(strings.TrimSpace(header[5]), "direction")
+	if len(header) >= 6 && !hasDirection {
+		return nil, fmt.Errorf("%w: sixth column must be direction when present", models.ErrValidation)
+	}
 
 	var rows []models.BatchRow
 	for {
@@ -150,10 +156,29 @@ func ParseCSV(r io.Reader) ([]models.BatchRow, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid occurred_at in csv", models.ErrValidation)
 		}
+		kind := strings.ToLower(strings.TrimSpace(record[2]))
+		direction := ""
+		if hasDirection && len(record) >= 6 {
+			direction = strings.ToLower(strings.TrimSpace(record[5]))
+		}
+		if direction == "" {
+			switch kind {
+			case models.KindEarn:
+				direction = models.DirectionCredit
+			case models.KindSpend:
+				direction = models.DirectionDebit
+			default:
+				return nil, fmt.Errorf("%w: direction required for adjustment rows in csv", models.ErrValidation)
+			}
+		}
+		if _, err := models.ResolveTransactionDirection(kind, direction); err != nil {
+			return nil, fmt.Errorf("%w: invalid kind or direction in csv", models.ErrValidation)
+		}
 		rows = append(rows, models.BatchRow{
 			Ref:         strings.TrimSpace(record[0]),
 			AccountID:   strings.TrimSpace(record[1]),
-			Kind:        strings.ToLower(strings.TrimSpace(record[2])),
+			Kind:        kind,
+			Direction:   direction,
 			WholePoints: wholePoints,
 			OccurredAt:  occurredAt,
 		})

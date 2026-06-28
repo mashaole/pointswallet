@@ -20,6 +20,7 @@ type LedgerEntry struct {
 	Ref                string
 	AccountID          string
 	Kind               string
+	Direction          string
 	Points             Points
 	BalanceAfterPoints Points
 	OccurredAt         time.Time
@@ -32,6 +33,7 @@ type TransactionInput struct {
 	Ref            string
 	AccountID      string
 	Kind           string
+	Direction      string
 	WholePoints    int64
 	OccurredAt     time.Time
 	ActorAccountID string
@@ -39,11 +41,12 @@ type TransactionInput struct {
 }
 
 type BatchRow struct {
-	Ref        string
-	AccountID  string
-	Kind       string
+	Ref         string
+	AccountID   string
+	Kind        string
+	Direction   string
 	WholePoints int64
-	OccurredAt time.Time
+	OccurredAt  time.Time
 }
 
 type BatchSummary struct {

@@ -23,7 +23,7 @@ func (c *TransactionController) MemberTransaction(w http.ResponseWriter, r *http
 		WriteError(w, MapDomainError(models.ErrUnauthorized))
 		return
 	}
-	c.postTransaction(w, r, claims.Sub, claims.Sub)
+	c.postTransaction(w, r, claims.Sub, claims.Sub, true)
 }
 
 func (c *TransactionController) AdminTransaction(w http.ResponseWriter, r *http.Request) {
@@ -33,12 +33,16 @@ func (c *TransactionController) AdminTransaction(w http.ResponseWriter, r *http.
 		return
 	}
 	accountID := r.PathValue("id")
-	c.postTransaction(w, r, accountID, claims.Sub)
+	c.postTransaction(w, r, accountID, claims.Sub, false)
 }
 
-func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.Request, accountID, actorID string) {
+func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.Request, accountID, actorID string, memberOnly bool) {
 	var req dto.TransactionRequest
 	if !decodeAndValidateJSON(w, r, c.maxBytes, &req, func(d *dto.TransactionRequest) { d.Sanitize() }, nil) {
+		return
+	}
+	if memberOnly && req.Kind == models.KindAdjustment {
+		WriteError(w, MapDomainError(models.ErrForbidden))
 		return
 	}
 	ref, err := dto.ResolveTransactionRef(r.Header.Get(models.IdempotencyKeyHeader), req.Ref)
@@ -47,6 +51,11 @@ func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := req.ValidateWithResolvedRef(ref); err != nil {
+		WriteError(w, MapDomainError(err))
+		return
+	}
+	direction, err := req.ResolvedDirection()
+	if err != nil {
 		WriteError(w, MapDomainError(err))
 		return
 	}
@@ -59,6 +68,7 @@ func (c *TransactionController) postTransaction(w http.ResponseWriter, r *http.R
 		Ref:            ref,
 		AccountID:      accountID,
 		Kind:           req.Kind,
+		Direction:      direction,
 		WholePoints:    req.Points,
 		OccurredAt:     occurredAt,
 		ActorAccountID: actorID,
@@ -76,6 +86,7 @@ func ledgerEntryResponse(e models.LedgerEntry) map[string]any {
 		"ref":                  e.Ref,
 		"account_id":           e.AccountID,
 		"kind":                 e.Kind,
+		"direction":            models.LedgerEntryDirection(e.Kind, e.Direction),
 		"points":               e.Points.WholePoints(),
 		"balance_after_points": e.BalanceAfterPoints.WholePoints(),
 		"occurred_at":          e.OccurredAt,

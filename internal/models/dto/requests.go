@@ -162,6 +162,7 @@ func (r UpdateAdminAccountRequest) Validate() error {
 type TransactionRequest struct {
 	Ref        string `json:"ref"`
 	Kind       string `json:"kind"`
+	Direction  string `json:"direction"`
 	Points     int64  `json:"points"`
 	OccurredAt string `json:"occurred_at"`
 }
@@ -169,6 +170,7 @@ type TransactionRequest struct {
 func (r *TransactionRequest) Sanitize() {
 	r.Ref = strings.TrimSpace(r.Ref)
 	r.Kind = strings.ToLower(strings.TrimSpace(r.Kind))
+	r.Direction = strings.ToLower(strings.TrimSpace(r.Direction))
 	r.OccurredAt = strings.TrimSpace(r.OccurredAt)
 }
 
@@ -178,6 +180,12 @@ func (r TransactionRequest) ValidateWithResolvedRef(ref string) error {
 	}
 	if r.Kind != models.KindEarn && r.Kind != models.KindSpend && r.Kind != models.KindAdjustment {
 		return models.ErrInvalidKind
+	}
+	if r.Direction == "" {
+		return models.ErrFieldRequired("direction")
+	}
+	if _, err := models.ResolveTransactionDirection(r.Kind, r.Direction); err != nil {
+		return err
 	}
 	if r.Points <= 0 {
 		return models.ErrInvalidPoints
@@ -206,6 +214,10 @@ func ResolveTransactionRef(headerKey, bodyRef string) (string, error) {
 		return bodyRef, nil
 	}
 	return "", models.ErrFieldRequired("ref or Idempotency-Key header")
+}
+
+func (r TransactionRequest) ResolvedDirection() (string, error) {
+	return models.ResolveTransactionDirection(r.Kind, r.Direction)
 }
 
 func (r TransactionRequest) OccurredTime() (time.Time, error) {

@@ -180,11 +180,24 @@ func (d *WalletDAO) ApplyTransaction(ctx context.Context, in models.TransactionI
 
 	delta := models.PointsFromWhole(in.WholePoints)
 	current := models.Points(balance)
+	direction, err := models.ResolveTransactionDirection(in.Kind, in.Direction)
+	if err != nil {
+		return models.LedgerEntry{}, err
+	}
 	var newBalance models.Points
 
 	switch in.Kind {
-	case models.KindEarn, models.KindAdjustment:
+	case models.KindEarn:
 		newBalance = current.Add(delta)
+	case models.KindAdjustment:
+		if direction == models.DirectionDebit {
+			if current.Sub(delta) < 0 {
+				return models.LedgerEntry{}, models.ErrInsufficientBalance
+			}
+			newBalance = current.Sub(delta)
+		} else {
+			newBalance = current.Add(delta)
+		}
 	case models.KindSpend:
 		if current.Sub(delta) < 0 {
 			return models.LedgerEntry{}, models.ErrInsufficientBalance
@@ -198,12 +211,12 @@ func (d *WalletDAO) ApplyTransaction(ctx context.Context, in models.TransactionI
 	var ptsStored, balStored int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO ledger_entries
-			(ref, account_id, kind, points, balance_after_points, occurred_at, actor_account_id, source)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, ref, account_id, kind, points, balance_after_points, occurred_at, recorded_at, actor_account_id, source`,
-		in.Ref, in.AccountID, in.Kind, delta.Int64(), newBalance.Int64(), in.OccurredAt, in.ActorAccountID, in.Source,
+			(ref, account_id, kind, direction, points, balance_after_points, occurred_at, actor_account_id, source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, ref, account_id, kind, direction, points, balance_after_points, occurred_at, recorded_at, actor_account_id, source`,
+		in.Ref, in.AccountID, in.Kind, direction, delta.Int64(), newBalance.Int64(), in.OccurredAt, in.ActorAccountID, in.Source,
 	).Scan(
-		&entry.ID, &entry.Ref, &entry.AccountID, &entry.Kind,
+		&entry.ID, &entry.Ref, &entry.AccountID, &entry.Kind, &entry.Direction,
 		&ptsStored, &balStored, &entry.OccurredAt, &entry.RecordedAt,
 		&entry.ActorAccountID, &entry.Source,
 	)
