@@ -1,0 +1,5 @@
+ref,account_id,kind,points,occurred_at
+batch-dup-001,member-1,earn,20,2024-06-02T10:00:00Z
+batch-dup-001,member-1,earn,20,2024-06-02T10:00:01Z
+batch-over-001,member-1,spend,999999,2024-06-02T10:01:00Z
+batch-ok-004,member-1,earn,5,2024-06-02T10:02:00Z

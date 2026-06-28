@@ -166,11 +166,37 @@ Requires **Member Login** (folder **01**) first.
 
 Batch audit response shape: `{ "data": [ {...}, ... ], "pagination": {...} }` (not `data.items`).
 
+#### Sample CSV files
+
+Use **`member-1`** (created by **Create Member** in Postman). Run **Member Login** before batch if the collection was reset.
+
+| File | Purpose | Expected job summary (typical) |
+|------|---------|--------------------------------|
+| `sample-batch-success.csv` | Video/demo: **all rows accepted** | 3 accepted, 0 rejected, 0 duplicates |
+| `sample-batch-rejects.csv` | Video/demo: **success + duplicate + insufficient balance** | 2 accepted, 1 rejected, 1 duplicate |
+| `sample-batch.csv` | Original mixed file (earn, spend, duplicate `ref` in same file) | 2 accepted, 0 rejected, 1 duplicate |
+
+**`sample-batch-success.csv`** — three unique refs: earn 50, earn 25, spend 10 (spend succeeds if balance ≥ 10 after earns).
+
+**`sample-batch-rejects.csv`** — row by row:
+
+| Row | ref | Expected audit |
+|-----|-----|----------------|
+| 1 | `batch-dup-001` earn 20 | `accepted` / `ok` |
+| 2 | `batch-dup-001` earn 20 | `rejected` / `duplicate_ref` |
+| 3 | `batch-over-001` spend 999999 | `rejected` / `insufficient_balance` |
+| 4 | `batch-ok-004` earn 5 | `accepted` / `ok` |
+
+**Video order:** upload **success** first (show clean audit), then **rejects** (show duplicate and overdraw in audit + job counts).
+
 #### Attach CSV for Upload
 
 1. Open **Upload CSV**
 2. **Body** → **form-data**
-3. Key `file` → type **File** → select `postman/sample-batch.csv`
+3. Key `file` → type **File** → select one of:
+   - `postman/sample-batch-success.csv` — all accepted
+   - `postman/sample-batch-rejects.csv` — duplicate + insufficient balance
+   - `postman/sample-batch.csv` — original mixed example
 4. Send
 
 The test script saves `batchJobId`. If status is `queued` or `processing`, send **Get Batch Job Status** again after 1–2 seconds.

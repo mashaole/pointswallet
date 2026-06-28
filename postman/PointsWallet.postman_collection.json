@@ -424,7 +424,7 @@
                   "key": "file",
                   "type": "file",
                   "src": "sample-batch.csv",
-                  "description": "Attach postman/sample-batch.csv or your own CSV"
+                  "description": "sample-batch-success.csv (all ok), sample-batch-rejects.csv (dup + overdraw), or sample-batch.csv"
                 }
               ]
             },
