@@ -146,15 +146,16 @@ Requires **Member Login** (folder **01**) first.
 | 1 | **Update My Account** | **200** | Member: name + email only |
 | 2 | **Delete My Account** | **204** | Optional — soft-deletes member; skip if continuing tests |
 | 3 | **My Balance** | **200** |
-| 4 | **Earn Points** | **201** (or **409** if `Idempotency-Key: tx-001` already used) | Header only — no body `ref` |
-| 5 | **Spend Points** | **201** | Pre-request sets `Idempotency-Key` to new UUID |
+| 4 | **Earn Points** | **201** (or **409** if `Idempotency-Key: tx-001` already used) | Body must include `"direction": "credit"` |
+| 5 | **Spend Points** | **201** | `"direction": "debit"`; pre-request sets new `Idempotency-Key` |
 | 6 | **My Ledger** | **200** | Check `actor_account_id` matches member for self-service rows |
 
 ### Folder: **04 Admin Transactions**
 
 | # | Request | Expected |
 |---|---------|----------|
-| 1 | **Admin Adjust Account** | **201** | `kind: adjustment`; `actor_account_id` = admin, `account_id` = member |
+| 1 | **Admin Adjust Account (credit)** | **201** | `actor_account_id` = admin; `direction=credit`; `account_id` = member |
+| 2 | **Admin Adjust Debit** | **201** | `direction: debit`; fails **422** if balance too low |
 
 ### Folder: **05 Batch (Admin)**
 

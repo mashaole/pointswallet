@@ -11,6 +11,7 @@
     { "key": "memberEmail", "value": "rina@example.com" },
     { "key": "memberPassword", "value": "changeme1" },
     { "key": "adminToken", "value": "" },
+    { "key": "adminAccountId", "value": "admin" },
     { "key": "memberToken", "value": "" },
     { "key": "memberAccountId", "value": "member-1" },
     { "key": "batchJobId", "value": "" },
@@ -32,6 +33,9 @@
                   "const j = pm.response.json();",
                   "if (j.data && j.data.access_token) {",
                   "  pm.collectionVariables.set('adminToken', j.data.access_token);",
+                  "}",
+                  "if (j.data && j.data.account_id) {",
+                  "  pm.collectionVariables.set('adminAccountId', j.data.account_id);",
                   "}"
                 ],
                 "type": "text/javascript"
@@ -306,7 +310,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"earn\",\n  \"points\": 150,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"earn\",\n  \"direction\": \"credit\",\n  \"points\": 150,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions",
             "description": "Idempotency via Idempotency-Key header (no body ref). Fixed tx-001 for duplicate testing."
@@ -334,7 +338,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"spend\",\n  \"points\": 50,\n  \"occurred_at\": \"2024-06-01T11:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"spend\",\n  \"direction\": \"debit\",\n  \"points\": 50,\n  \"occurred_at\": \"2024-06-01T11:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
@@ -363,7 +367,51 @@
       "name": "04 Admin Transactions",
       "item": [
         {
-          "name": "Admin Adjust Account",
+          "name": "Admin Adjust Credit",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('{{$guid}}'));"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status 201', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('admin actor and adjustment direction recorded', () => {",
+                  "  pm.expect(j.data.actor_account_id).to.eql(pm.collectionVariables.get('adminAccountId'));",
+                  "  pm.expect(j.data.account_id).to.eql(pm.collectionVariables.get('memberAccountId'));",
+                  "  pm.expect(j.data.kind).to.eql('adjustment');",
+                  "  pm.expect(j.data.direction).to.eql('credit');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"adjustment\",\n  \"direction\": \"credit\",\n  \"points\": 25,\n  \"occurred_at\": \"2024-06-01T12:00:00Z\"\n}"
+            },
+            "url": "{{baseUrl}}/accounts/{{memberAccountId}}/transactions",
+            "description": "Admin adjustment credit. Ledger records actor_account_id (admin), direction, and kind=adjustment."
+          }
+        },
+        {
+          "name": "Admin Adjust Debit",
           "event": [
             {
               "listen": "prerequest",
@@ -384,10 +432,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"adjustment\",\n  \"points\": 25,\n  \"occurred_at\": \"2024-06-01T12:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"adjustment\",\n  \"direction\": \"debit\",\n  \"points\": 5,\n  \"occurred_at\": \"2024-06-01T13:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/accounts/{{memberAccountId}}/transactions",
-            "description": "Admin adjust uses kind adjustment. Response and ledger include actor_account_id (the admin)."
+            "description": "Admin adjustment debit. Requires sufficient member balance; ledger records direction=debit."
           }
         }
       ]
@@ -490,7 +538,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"earn\",\n  \"points\": 10,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"earn\",\n  \"direction\": \"credit\",\n  \"points\": 10,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
@@ -521,7 +569,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"kind\": \"spend\",\n  \"points\": 999999,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
+              "raw": "{\n  \"kind\": \"spend\",\n  \"direction\": \"debit\",\n  \"points\": 999999,\n  \"occurred_at\": \"2024-06-01T10:00:00Z\"\n}"
             },
             "url": "{{baseUrl}}/transactions"
           }
