@@ -17,7 +17,7 @@ Single Go HTTP service implementing a loyalty points wallet with PostgreSQL pers
 | **3 — Batch CSV** | Done | Postman **05 Batch**; audit lists all rows including rejects |
 | **Account CRUD** | Done | List/update/soft-delete; `PATCH`/`DELETE` admin + member |
 | **Header idempotency** | Done | `Idempotency-Key` on API transactions |
-| **Ledger audit** | Done | `actor_account_id` in ledger API responses |
+| **Ledger audit** | Done | `actor_account_id`, `direction`, and `kind` on ledger/transaction responses; Postman **04 Admin Transactions** |
 | **Unit tests** | Done | `go test ./...` |
 | **Postman collection** | Done | Single import file + `postman/README.md` |
 | **Docs** | Done | `PLAN.md`, `README.md`, `SOLUTION.md` |
@@ -40,7 +40,7 @@ Every earn/spend/adjustment goes through `WalletDAO.ApplyTransaction` (API, admi
 | `kind` | Effect | Overdraft check |
 |--------|--------|-----------------|
 | `earn` | Adds points | N/A |
-| `adjustment` | Adds points (admin) | N/A |
+| `adjustment` | Adds or subtracts points (admin) | **Debit** rejected if balance insufficient |
 | `spend` | Subtracts points | **Rejected** if `balance - points < 0` |
 
 **Spend enforcement (application):** After locking the account row, spend computes `current.Sub(delta)`; if the result is negative, returns `ErrInsufficientBalance` **before** any ledger insert or balance update. The DB transaction rolls back — no partial write.
@@ -49,7 +49,11 @@ Every earn/spend/adjustment goes through `WalletDAO.ApplyTransaction` (API, admi
 
 **API:** `insufficient_balance` → **422**. Postman **06 Negative Cases → Insufficient Balance** covers this.
 
-Spending the **exact** balance (result `0`) is allowed. Only `kind: spend` can reduce balance; admin adjustments use `kind: adjustment` and always add points.
+Spending the **exact** balance (result `0`) is allowed. `kind: spend` and `adjustment` with `direction: debit` can reduce balance.
+
+**API `direction` (required):** Every transaction request must include `direction`. Must match kind: `earn` → `credit`, `spend` → `debit`, `adjustment` → `credit` or `debit`. Omission → **400** `validation_error`.
+
+**Ledger audit fields:** Every entry stores `kind`, **`direction`** (`credit` | `debit`), and **`actor_account_id`**. For admin adjustments, `account_id` is the member wallet and `actor_account_id` is the admin (JWT `sub`). Look up admin name/email via `GET /accounts/{actor_account_id}` if needed — not duplicated on the ledger row.
 
 ## Points storage
 
@@ -142,6 +146,8 @@ Per-account row lock (`SELECT … FOR UPDATE`) serializes concurrent earns/spend
 | Async batch | Large files don't block HTTP; client polls rather than websockets as its a short process |
 | Denormalized `balance_points` | Fast reads; ledger is system of record |
 | Balance check in DAO | Single transactional path; `FOR UPDATE` + in-txn check avoids race with concurrent spends |
+| `direction` on ledger + API | Explicit credit/debit for audit; required on REST body; stored in `ledger_entries.direction` (`003` migration) |
+| `actor_account_id` only (no denormalized actor profile) | Admin identity is a FK-style id on the ledger row; name/email resolved via `GET /accounts/{id}` when accounting needs it |
 | `auth_tokens` not `sessions` | Same semantics; name matches migration table |
 
 ## Threat model (STRIDE-lite)
@@ -337,18 +343,42 @@ Issues found during Postman/curl testing and fixed in code:
 
 **Effect:** Removed unused `LedgerDAO.RefExists`, `BatchDAO.FailJob`, unused error sentinels/helpers, duplicate `writeError` wrapper; `staticcheck ./...` clean.
 
+### 30 — Admin adjustment credit and debit
+
+> I want adjustment to support adjust in and out (credit and debit) with a clear audit trail on the ledger, without breaking existing clients.
+
+**Effect:** Kept single `kind: adjustment` (assignment only defines `earn` | `spend`; `adjustment` is our extension). Added **`direction: credit | debit`** on the API and **`ledger_entries.direction`** (`migrations/003_ledger_direction.sql`). Credit adds points; debit subtracts with the same insufficient-balance rules as spend. Batch CSV: optional 6th column `direction`; earn/spend rows still infer direction from kind in 5-column files.
+
+**Why not two kinds (`adjustment_credit` / `adjustment_debit`)?** Would alter the `kind` CHECK and break existing `adjustment` rows. **Why not negative `points`?** Conflicts with `CHECK (points > 0)` and assignment-style positive integers.
+
+### 31 — Record which admin performed an adjustment
+
+> For auditing and accounting we need to know which admin did a specific adjustment.
+
+**Effect:** Already satisfied by **`actor_account_id`** on every ledger row — set from JWT `sub` on `POST /accounts/{id}/transactions` (admin route) and from the uploading admin on batch. **`account_id`** = member wallet affected; **`actor_account_id`** = who acted. Members cannot POST `kind: adjustment` on `POST /transactions` (**403**).
+
+**Rejected:** Duplicating admin `name` / `email` on each ledger row or nested `actor` object in JSON — `actor_account_id` is enough; lookup via accounts API when needed.
+
+### 32 — Require `direction` on transaction endpoints
+
+> Make `direction` required on the endpoint from now on.
+
+**Effect:** `TransactionRequest` validation requires `direction` on **`POST /transactions`** and **`POST /accounts/{id}/transactions`**. Rules: `earn` → `credit`, `spend` → `debit`, `adjustment` → `credit` or `debit`; mismatch or omission → **400** `validation_error`. Postman collection and README curl examples updated. Unit tests in `internal/models/direction_test.go` and `internal/service/wallet/service_test.go`.
+
+**Breaking change:** Clients that omit `direction` must send it explicitly. Restart server so migration **003** runs before testing.
+
 ---
 
 ## Testing summary
 
 | Layer | Command / tool | Scope | Status |
 |-------|----------------|-------|--------|
-| Unit | `go test ./...` | Points math; DTO idempotency; wallet duplicate ref + insufficient balance; gzip middleware | Partial (auth/batch/controller mocks not yet extracted) |
+| Unit | `go test ./...` | Points math; DTO idempotency; **direction validation**; wallet duplicate ref + insufficient balance + adjustment debit; gzip middleware | Partial (auth/batch/controller mocks not yet extracted) |
 | Static analysis | `staticcheck ./...` | Unused code, common bugs | Done |
 | Integration | Postman collection | Full API: auth, RBAC, wallet, accounts, batch, negative cases | Done |
 | Manual | curl examples in README | Same flows without Postman | Done |
 
-Postman **06 Negative Cases** expects **Earn Points** first with `Idempotency-Key: tx-001`; **Duplicate Ref** replays the same header.
+Postman **04 Admin Transactions** asserts `actor_account_id`, `kind: adjustment`, and `direction` on admin credit. **06 Negative Cases** expects **Earn Points** first with `Idempotency-Key: tx-001` and `"direction": "credit"`; **Duplicate Ref** replays the same header.
 
 ---
 

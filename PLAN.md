@@ -58,7 +58,9 @@ Three tasks in one service, runnable locally:
 - **Local dev:** **Docker Compose** — Postgres container with a named volume so data survives restarts.
 - **Email:** Required on every account; **globally unique**; validated in **Go (backend)** and **PostgreSQL (CHECK + UNIQUE)**. Login and forgot-password use email.
 - **Architecture:** **Layered + ports/adapters** — Router → Controller → Service → DAO → Models. Each layer has a single job; dependencies point inward. DAO interfaces allow swapping Postgres without touching services or controllers.
-- **Ledger:** **Immutable append-only ledger** — every accepted earn/spend/adjustment appends one `ledger_entries` row; no UPDATE/DELETE ever.
+- **Ledger:** **Immutable append-only ledger** — every accepted earn/spend/adjustment appends one `ledger_entries` row; no UPDATE/DELETE ever. Each row stores **`direction`** (`credit` | `debit`), **`actor_account_id`** (who acted), and **`kind`** (including admin-only **`adjustment`**).
+- **Admin adjustments:** `POST /accounts/{id}/transactions` with `kind: adjustment` and required **`direction`** (`credit` adds, `debit` subtracts). **`actor_account_id`** = admin JWT `sub`; **`account_id`** = member wallet. Members cannot POST `adjustment` (**403**). Assignment spec only defines `earn` | `spend`; `adjustment` is our extension for admin audit (see [SOLUTION.md](SOLUTION.md) prompts 30–32).
+- **Transaction `direction` (API):** Required on **`POST /transactions`** and **`POST /accounts/{id}/transactions`**. Must match kind: `earn` → `credit`, `spend` → `debit`, `adjustment` → `credit` or `debit`. Omission → **400** `validation_error`. Stored in `ledger_entries.direction` (`migrations/003_ledger_direction.sql`).
 - **Batch audit (assignment Task 3):** **`audit_events` logs every batch row** — accepted **and** rejected — with `status`, `reason`, and `timestamp`. Ledger remains the financial record for accepted rows; audit is the per-attempt trail.
 - **Idempotency:** **`ref` is the global idempotency key** for every transaction — single API call or batch CSV row. API transactions accept **`Idempotency-Key` header** (preferred) or JSON body `ref` (fallback); both must match if both are sent. Batch CSV uses the `ref` column. Same `ref` never produces two ledger entries or two balance changes (enforced in service + DB).
 - **Account lifecycle:** Soft delete via `deleted_at` (`migrations/002_accounts_soft_delete.sql`); admin list/update/delete; members update/delete own profile; **last-admin guard** (`409 last_admin`).
@@ -168,7 +170,7 @@ sequenceDiagram
 | Step | Action | Auth | Outcome |
 |------|--------|------|---------|
 | D1 | `GET /accounts/me/balance` | Member JWT | Own balance only |
-| D2 | `POST /transactions` `{kind, points, occurred_at}` + **`Idempotency-Key` header** (or body `ref`) | Member JWT | Earn/spend on **own** account |
+| D2 | `POST /transactions` `{kind, direction, points, occurred_at}` + **`Idempotency-Key` header** (or body `ref`) | Member JWT | Earn/spend on **own** account only (`earn`/`spend` kinds; **`adjustment` forbidden**) |
 | D3 | Member targets another account | Member JWT | **403 Forbidden** |
 | D4 | `PATCH /accounts/me` `{name, email}` | Member JWT | Update own profile |
 | D5 | `DELETE /accounts/me` | Member JWT | Soft delete own account; revoke auth_tokens |
@@ -183,9 +185,12 @@ flowchart TD
   BeginTx --> LockRow["SELECT balance_points FROM accounts WHERE id = $1 FOR UPDATE"]
   LockRow --> DupCheck{ref exists?}
   DupCheck -->|Yes| RejectDup[Reject duplicate reason]
-  DupCheck -->|No| Kind{kind?}
-  Kind -->|earn| AppendLedger[Append ledger entry update balance_points]
-  Kind -->|spend| BalanceOK{balance_points minus points >= 0?}
+  DupCheck -->|No| Kind{kind + direction?}
+  Kind -->|earn credit| AppendLedger[Append ledger entry update balance_points]
+  Kind -->|spend debit| BalanceOK{balance_points minus points >= 0?}
+  Kind -->|adjustment debit| BalanceOK
+  Kind -->|adjustment credit| AppendLedger
+  Kind -->|missing/wrong direction| RejectVal[400 validation_error]
   BalanceOK -->|No| RejectNeg[Reject insufficient funds]
   BalanceOK -->|Yes| AppendLedger
   AppendLedger --> Commit[COMMIT]
@@ -196,8 +201,25 @@ flowchart TD
 
 ### Flow E — Admin: adjustment
 
-- `POST /accounts/{account_id}/transactions` — admin may target any account.
-- “Adjustment” = admin-posted earn/spend (same integer points rules).
+- `POST /accounts/{account_id}/transactions` — admin may target any account (admin JWT + `RequireAdmin`).
+- Body: **`kind: adjustment`** with required **`direction: credit | debit`**; **`points`** always positive; same idempotency rules as other transactions.
+- **`actor_account_id`** on ledger row = admin’s `account_id` (JWT `sub`). **`account_id`** on ledger row = member wallet in path.
+- Credit adds points; debit subtracts with same insufficient-balance check as `spend`.
+- Members cannot use `kind: adjustment` on `POST /transactions` (**403** `forbidden`).
+- Batch CSV: uploading admin is `actor_account_id` for accepted rows. Optional 6th column **`direction`**; 5-column files infer direction from `kind` for `earn`/`spend` only — **`adjustment` rows require explicit direction** in CSV.
+
+**Example (admin credit on member wallet):**
+
+```json
+{
+  "kind": "adjustment",
+  "direction": "credit",
+  "points": 25,
+  "occurred_at": "2024-06-01T12:00:00Z"
+}
+```
+
+**Response / ledger entry includes:** `kind`, `direction`, `actor_account_id`, `account_id`, `points`, `balance_after_points`, `source`.
 
 ### Flow F — Admin: CSV batch ingestion (async + concurrent)
 
@@ -349,14 +371,14 @@ flowchart LR
 **Rules:**
 
 - Every **accepted** transaction → exactly one **INSERT** into `ledger_entries` (never UPDATE/DELETE).
-- Ledger row: `ref`, `account_id`, `kind`, `points`, `balance_after_points`, `occurred_at`, `recorded_at`, `actor_account_id`, `source`.
+- Ledger row: `ref`, `account_id`, `kind`, **`direction`**, `points`, `balance_after_points`, `occurred_at`, `recorded_at`, **`actor_account_id`**, `source`.
 - **`accounts.balance_points`** updated in the same DB txn as ledger INSERT.
 - **Every batch row attempt** → one **`audit_events`** row (`status`: `accepted` | `rejected`, `reason`, `timestamp`) — assignment Task 3.
 - **API-only** txs: ledger sufficient; no `audit_events` required. **Batch path** always writes audit for every row.
 - **Rejected** attempts → no ledger row; batch rejections still get `audit_events`.
 - **Idempotency:** global `UNIQUE(ref)`; duplicate never mutates balance twice.
 
-- **Read ledger (paginated):** responses include **`actor_account_id`** (who performed the action).
+- **Read ledger (paginated):** responses include **`direction`**, **`kind`**, and **`actor_account_id`** (who performed the action; for admin adjustments, differs from `account_id`).
 - Member: `GET /accounts/me/ledger?limit=20&offset=0` — own entries, newest-first.
 - Admin: `GET /accounts/{id}/ledger?limit=20&offset=0` — any account.
 - **Default:** `limit=20` when query param omitted; `offset=0` when omitted.
@@ -368,7 +390,10 @@ flowchart LR
 |----------|---------------|-------|
 | Duplicate `ref` (API or CSV) | 409 or duplicate count in batch summary | `audit_events` rejected `duplicate_ref` |
 | Batch row accepted | — | `audit_events` accepted `ok` |
-| Spend > balance | 422 / 400 | `insufficient_balance` |
+| Spend > balance (spend or adjustment debit) | 422 | `insufficient_balance` |
+| Missing or invalid `direction` | 400 | `validation_error` |
+| `direction` mismatches kind (e.g. earn + debit) | 400 | `validation_error` |
+| Member POST `kind: adjustment` | 403 | — |
 | Invalid kind / negative points | 400 | `validation_error` |
 | Float in JSON points field | 400 | `validation_error` |
 | Member reads other account | 403 | — |
@@ -575,6 +600,7 @@ CREATE TABLE ledger_entries (
   ref                 TEXT NOT NULL UNIQUE,
   account_id          TEXT NOT NULL REFERENCES accounts(account_id),
   kind                TEXT NOT NULL CHECK (kind IN ('earn', 'spend', 'adjustment')),
+  direction           TEXT NOT NULL CHECK (direction IN ('credit', 'debit')),
   points              BIGINT NOT NULL CHECK (points > 0),              -- point-cents
   balance_after_points BIGINT NOT NULL CHECK (balance_after_points >= 0), -- point-cents
   occurred_at         TIMESTAMPTZ NOT NULL,
@@ -587,8 +613,9 @@ CREATE INDEX idx_ledger_account_recorded ON ledger_entries (account_id, recorded
 ```
 
 - **`ref` UNIQUE** — global idempotency key (assignment requirement).
+- **`direction`** — `credit` (add) or `debit` (subtract); required on API; stored on every ledger row. Migration **`003_ledger_direction.sql`** adds column and backfills existing rows (`earn`/`adjustment` → credit, `spend` → debit).
 - **`balance_after_points`** — running balance snapshot after this entry.
-- **`actor_account_id`** — who triggered the action (member self-serve or admin adjusting).
+- **`actor_account_id`** — who triggered the action (member self-serve, admin adjusting a member, or uploading admin for batch). Admin identity is **id only** on the ledger — resolve name/email via `GET /accounts/{actor_account_id}` when needed.
 - **`source`** — distinguishes API vs batch ingestion for audit.
 - **Immutability:** no UPDATE/DELETE triggers or app methods; optional migration comment: `REVOKE UPDATE, DELETE ON ledger_entries FROM wallet_app`.
 
@@ -663,8 +690,9 @@ BEGIN;
 SELECT balance_points FROM accounts WHERE account_id = $1 FOR UPDATE;
 -- check duplicate ref in ledger_entries
 -- check spend would not go negative
-INSERT INTO ledger_entries (ref, account_id, kind, points, balance_after_points, occurred_at, actor_account_id, source)
+INSERT INTO ledger_entries (ref, account_id, kind, direction, points, balance_after_points, occurred_at, actor_account_id, source)
   VALUES (...);
+-- kind=direction rules: earn→credit, spend→debit; adjustment→credit|debit (debit checks balance)
 UPDATE accounts SET balance_points = $balance_after WHERE account_id = $1;
 COMMIT;
 -- rejected paths: INSERT audit_events only, ROLLBACK or skip ledger insert
@@ -681,12 +709,15 @@ pointswallet/
 ├── docker-compose.yml
 ├── migrations/
 │   ├── 001_init.sql
-│   └── 002_accounts_soft_delete.sql
+│   ├── 002_accounts_soft_delete.sql
+│   └── 003_ledger_direction.sql
 ├── .env.example
 ├── cmd/server/main.go              # composition root: wire DAO → services → controllers → router
 ├── postman/
 │   ├── PointsWallet.postman_collection.json   # single file; collection-scoped variables
 │   ├── sample-batch.csv
+│   ├── sample-batch-success.csv
+│   ├── sample-batch-rejects.csv
 │   └── README.md                   # import + Collection Runner instructions
 ├── internal/
 │   ├── testutil/
@@ -740,7 +771,10 @@ pointswallet/
 │   └── adapters/
 │       └── logger/
 │           └── slog.go             # Logger interface + slog impl
-├── migrations/001_init.sql
+├── migrations/
+│   ├── 001_init.sql
+│   ├── 002_accounts_soft_delete.sql
+│   └── 003_ledger_direction.sql
 ├── README.md
 ├── SOLUTION.md
 └── go.mod
@@ -907,7 +941,7 @@ sequenceDiagram
 |------------|---------|
 | `AuthController` | login, logout, forgot/reset password |
 | `AccountController` | create, list, get, update, delete (admin); my balance, update, delete (member) |
-| `TransactionController` | member tx, admin adjustment; resolves `Idempotency-Key` / body `ref` |
+| `TransactionController` | member earn/spend; admin adjustment; required `direction`; member **`adjustment` → 403**; resolves `Idempotency-Key` / body `ref` |
 | `LedgerController` | GET ledger history (member own / admin any) |
 | `BatchController` | CSV upload → **202**; GET job status; GET paginated audit |
 
@@ -972,6 +1006,7 @@ func decodeAndSanitizeJSON(w http.ResponseWriter, r *http.Request, dst dto.Sanit
 | `name` | trim; max length (e.g. 128) |
 | `password` | trim outer whitespace only; no HTML entity encoding (stored hashed) |
 | `kind` | trim; lowercase; allowlist `earn` \| `spend` \| `adjustment` |
+| `direction` | trim; lowercase; **required**; allowlist `credit` \| `debit`; must match kind (see Flow E) |
 | `occurred_at` | parse RFC3339; reject zero time |
 
 **5. Validate (`dto.Validate()`)** — business rules after sanitization (required fields, email format, positive points, etc.).
@@ -1197,6 +1232,7 @@ DAO uses `LIMIT $limit OFFSET $offset` with a separate `COUNT(*)` for `total_cou
       "ref": "tx-001",
       "account_id": "member-123",
       "kind": "earn",
+      "direction": "credit",
       "points": 150,
       "balance_after_points": 150,
       "occurred_at": "2024-06-01T10:00:00Z",
@@ -1258,7 +1294,7 @@ Implemented in `controller/response.go` — single `writeError(w, apiErr)` used 
 | **405** | `method_not_allowed` | HTTP method not allowed on this path |
 | **409** | `duplicate_ref` | Same `ref` already accepted (API retry, batch reprocess, or concurrent duplicate) |
 | **409** | `email_already_exists` | Unique email constraint |
-| **422** | `insufficient_balance` | Spend would drive balance below zero |
+| **422** | `insufficient_balance` | Spend or adjustment debit would drive balance below zero |
 | **429** | `rate_limit_exceeded` | Too many requests; include `Retry-After` header |
 | **500** | `internal_error` | Unexpected failure; generic message to client, details in server logs |
 
@@ -1351,26 +1387,56 @@ Note in README: assignment minimal account JSON is `{ account_id, name }`; we ex
   "ref": "tx-001",
   "account_id": "member-123",
   "kind": "earn",
+  "direction": "credit",
   "points": 150,
   "balance_after_points": 150,
   "occurred_at": "2024-06-01T10:00:00Z",
   "recorded_at": "2024-06-01T10:00:01Z",
+  "actor_account_id": "member-123",
   "source": "api"
 }
 ```
 
-**Example transaction request (assignment-compatible):**
+**Example admin adjustment (response):**
 
 ```json
 {
-  "ref": "tx-001",
+  "ref": "adj-001",
+  "account_id": "member-123",
+  "kind": "adjustment",
+  "direction": "credit",
+  "points": 25,
+  "balance_after_points": 175,
+  "occurred_at": "2024-06-01T12:00:00Z",
+  "recorded_at": "2024-06-01T12:00:01Z",
+  "actor_account_id": "admin",
+  "source": "api"
+}
+```
+
+**Example transaction request (member earn):**
+
+```json
+{
   "kind": "earn",
+  "direction": "credit",
   "points": 150,
   "occurred_at": "2024-06-01T10:00:00Z"
 }
 ```
 
-(`points`: 150 in request → `15000` point-cents in `ledger_entries.points`)
+**Example transaction request (member spend):**
+
+```json
+{
+  "kind": "spend",
+  "direction": "debit",
+  "points": 50,
+  "occurred_at": "2024-06-01T11:00:00Z"
+}
+```
+
+Assignment PDF omits `direction`; our REST API **requires** it. (`points`: 150 → `15000` point-cents in DB.)
 
 **Example batch upload response (202 Accepted):**
 
@@ -1441,7 +1507,7 @@ Note in README: assignment minimal account JSON is `{ account_id, name }`; exten
 
 ### Transaction (assignment vs API)
 
-**Assignment shape (admin / CSV):**
+**Assignment shape (admin / CSV — no direction in PDF):**
 
 ```json
 {
@@ -1453,11 +1519,22 @@ Note in README: assignment minimal account JSON is `{ account_id, name }`; exten
 }
 ```
 
-**Member `POST /transactions`** — body `{kind, points, occurred_at}`; **`Idempotency-Key` header** preferred (body `ref` optional fallback); `account_id` inferred from JWT `sub`.
+**Our API extension (direction required on REST):**
 
-**Admin `POST /accounts/{id}/transactions`** — `account_id` in path; same idempotency rules; admin adjustments use `kind: "adjustment"`.
+```json
+{
+  "kind": "earn",
+  "direction": "credit",
+  "points": 150,
+  "occurred_at": "2024-06-01T10:00:00Z"
+}
+```
 
-**CSV** — header unchanged: `ref,account_id,kind,points,occurred_at`.
+**Member `POST /transactions`** — body `{kind, direction, points, occurred_at}`; **`Idempotency-Key` header** preferred (body `ref` optional fallback); `account_id` inferred from JWT `sub`. **`adjustment` forbidden** for members.
+
+**Admin `POST /accounts/{id}/transactions`** — `account_id` in path; **`kind: adjustment`** with **`direction: credit | debit`**; **`actor_account_id`** in response = admin.
+
+**CSV** — minimum header: `ref,account_id,kind,points,occurred_at` (direction inferred for `earn`/`spend`). Optional 6th column: **`direction`** (required for `adjustment` rows).
 
 ### Async batch flow (document clearly)
 
@@ -1501,16 +1578,17 @@ Task 2 explicitly requires documenting credential shape and enforcement — keep
 
 | Step | Item | Status |
 |------|------|--------|
-| 1 | Scaffold — compose, migrations (`001`, `002`), models, DAOs, pool, **`RecoverStaleJobs()` on startup** | ✅ Done |
+| 1 | Scaffold — compose, migrations (`001`, `002`, **`003`**), models, DAOs, pool, **`RecoverStaleJobs()` on startup** | ✅ Done |
 | 2 | Services — wallet/auth/batch with unit tests | ✅ Done |
 | 3 | Controllers + router + middleware — standardized errors; README curl examples | ✅ Done |
 | 4 | Auth — JWT, `auth_tokens`, RBAC; SOLUTION.md auth section | ✅ Done |
 | 5 | Batch — async processor; audit every row; 202 + GET job + GET audit; restart recovery | ✅ Done |
 | 6 | Account CRUD — list/update/soft-delete; last-admin guard | ✅ Done |
 | 7 | API idempotency — `Idempotency-Key` header + body `ref` fallback | ✅ Done |
-| 8 | Unit tests — wallet service, dto, points, compress middleware | ✅ Done (partial vs full matrix below) |
-| 9 | Postman collection — single file; positive/negative cases | ✅ Done |
-| 10 | README + SOLUTION.md | ✅ Done |
+| 11 | Admin adjustment audit — `direction` on ledger + API; required on REST; `actor_account_id`; member `adjustment` → 403 | ✅ Done |
+| 12 | Unit tests — wallet service, dto, points, **direction**, compress middleware | ✅ Done (partial vs full matrix below) |
+| 13 | Postman collection — single file; admin adjust credit/debit; direction on all txs | ✅ Done |
+| 14 | README + SOLUTION.md | ✅ Done |
 
 ---
 
@@ -1527,8 +1605,8 @@ Two layers: **Go unit tests** (fast, mocked) and **Postman integration tests** (
 | Package | What to test | Mock | Status |
 |---------|--------------|------|--------|
 | `models/dto` | `ResolveTransactionRef`, validation | none | ✅ `requests_test.go` |
-| `models` | Points conversion | none | ✅ `points_test.go` |
-| `service/wallet` | Idempotency, insufficient balance | inline `mockWalletDAO` | ✅ `service_test.go` |
+| `models` | Points conversion; **`ResolveTransactionDirection`** | none | ✅ `points_test.go`, `direction_test.go` |
+| `service/wallet` | Idempotency, insufficient balance, **adjustment debit** | inline `mockWalletDAO` | ✅ `service_test.go` |
 | `service/auth` | Single session, login/logout flow | `MockAuthDAO` | ⏳ Not yet |
 | `service/batch` | CSV row outcomes, summary counts | mocks | ⏳ Not yet |
 | `controller/*` | HTTP status mapping, validation | mock service | ⏳ Not yet |
@@ -1558,7 +1636,7 @@ Deliverables in `postman/` — **import single collection file** (no separate en
 | File | Purpose |
 |------|---------|
 | `PointsWallet.postman_collection.json` | All requests, test scripts, **collection-scoped variables** |
-| `sample-batch.csv` | Sample CSV for batch upload |
+| `sample-batch*.csv` | Demo CSVs (success, rejects, original) |
 | `README.md` | Import steps, Collection Runner order, negative test notes |
 
 **Collection variables** (defaults in collection; updated by test scripts):
@@ -1569,6 +1647,7 @@ Deliverables in `postman/` — **import single collection file** (no separate en
 | `adminEmail`, `adminPassword` | collection default | Admin login |
 | `memberAccountId`, `memberEmail`, `memberPassword` | collection default / create | Member flows |
 | `adminToken`, `memberToken` | login test scripts | `Authorization: Bearer {{token}}` |
+| `adminAccountId` | Admin Login test script | Assert admin `actor_account_id` on adjustments |
 | `idempotencyKey` | pre-request script (spend/admin) | `Idempotency-Key` header |
 | `batchJobId` | batch upload test | Poll + audit follow-up |
 | `resetToken` | forgot-password test | Reset password flow |
@@ -1589,11 +1668,12 @@ Points Wallet API
 │   ├── Get Account Balance / Ledger
 ├── 03 Wallet (Member)
 │   ├── My Balance / Update My Account / Delete My Account
-│   ├── Earn Points (Idempotency-Key: tx-001)
-│   ├── Spend Points (pre-request UUID idempotencyKey)
+│   ├── Earn Points (direction credit; Idempotency-Key: tx-001)
+│   ├── Spend Points (direction debit; pre-request UUID idempotencyKey)
 │   └── My Ledger
 ├── 04 Admin Transactions
-│   └── Admin Adjust Account (kind: adjustment)
+│   ├── Admin Adjust Account (adjustment + direction credit; asserts actor_account_id)
+│   └── Admin Adjust Debit (adjustment + direction debit)
 ├── 05 Batch (Admin)
 │   ├── Upload CSV → 202
 │   ├── Get Batch Job Status
@@ -1663,7 +1743,8 @@ Points Wallet API
 - **JWT + DB `auth_tokens`** — revocation, single session, reset invalidates all tokens.
 - **Soft delete + last-admin guard** — preserve ledger FK integrity; anonymize email; block orphaning the system.
 - **`Idempotency-Key` header** — REST-friendly idempotency without requiring body `ref` on every request.
-- **Ledger `actor_account_id` in API** — who performed each earn/spend/adjustment visible in list responses.
+- **Admin `adjustment` + required `direction`** — credit/debit audit on ledger; `actor_account_id` identifies admin without denormalizing profile fields.
+- **Ledger `actor_account_id` + `direction` in API** — who performed each action and whether points were credited or debited.
 - **Batch audit trail** — every batch row in `audit_events` (accepted + rejected); ledger for accepted financial record.
 - **Async batch + restart** — 202 poll flow; stale `processing` jobs → `failed` on boot; re-upload safe via idempotent refs.
 - **Immutable ledger** — append-only `ledger_entries`; balance is a cache.
@@ -1702,8 +1783,10 @@ Points Wallet API
 | Assignment Tasks 1–3 (wallet, auth/RBAC, batch) | ✅ Complete |
 | Account list / update / soft delete | ✅ Complete |
 | `Idempotency-Key` header | ✅ Complete |
+| Admin adjustment (`kind` + `direction` + `actor_account_id`) | ✅ Complete |
+| Migration `003_ledger_direction.sql` | ✅ Complete |
 | Postman single-file collection | ✅ Complete |
-| Unit tests (wallet, dto, points, compress) | ✅ Partial |
+| Unit tests (wallet, dto, points, direction, compress) | ✅ Partial |
 | Static analysis (`staticcheck`) | ✅ Done |
 
 See [SOLUTION.md](SOLUTION.md) for rationale, threat model, and full AI prompt log.

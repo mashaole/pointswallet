@@ -9,7 +9,7 @@ Loyalty points wallet service (Go + PostgreSQL).
 - JWT + DB-backed tokens (`auth_tokens`), `member` / `admin` RBAC
 - Admin creates members or admins via `POST /accounts` with `role`
 - Admin list/update/soft-delete accounts; members update/delete own profile
-- Ledger exposes **`actor_account_id`** (who performed each earn/spend/adjustment)
+- Ledger exposes **`actor_account_id`** (who performed the action) and **`direction`** (`credit` | `debit`) on every entry
 - Integer **point-cents** storage (×100 scale); API uses whole integer `points`
 
 ## Documentation
@@ -239,6 +239,7 @@ curl -s -X POST http://localhost:8080/transactions \
   -H 'Idempotency-Key: tx-001' \
   -d '{
     "kind": "earn",
+    "direction": "credit",
     "points": 150,
     "occurred_at": "2024-06-01T10:00:00Z"
   }' | jq
@@ -261,14 +262,14 @@ curl -s -X POST http://localhost:8080/transactions \
   -H "Authorization: Bearer $MEMBER_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: tx-001' \
-  -d '{"kind":"earn","points":10,"occurred_at":"2024-06-01T10:00:00Z"}' | jq
+  -d '{"kind":"earn","direction":"credit","points":10,"occurred_at":"2024-06-01T10:00:00Z"}' | jq
 
 # Insufficient balance → 422 insufficient_balance
 curl -s -X POST http://localhost:8080/transactions \
   -H "Authorization: Bearer $MEMBER_TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: tx-overdraw' \
-  -d '{"kind":"spend","points":999999,"occurred_at":"2024-06-01T10:00:00Z"}' | jq
+  -d '{"kind":"spend","direction":"debit","points":999999,"occurred_at":"2024-06-01T10:00:00Z"}' | jq
 ```
 
 ## Batch CSV (async)
@@ -324,10 +325,10 @@ See **[PLAN.md](PLAN.md)** for the implementation plan and **[SOLUTION.md](SOLUT
 | DELETE | `/accounts/me` | Member | Soft delete own account (204) |
 | GET | `/accounts/{id}/balance` | Admin | |
 | GET | `/accounts/{id}/ledger` | Admin | Paginated; each entry has `actor_account_id` |
-| POST | `/accounts/{id}/transactions` | Admin | Adjust any account; `kind: adjustment`; `Idempotency-Key` or body `ref` |
+| POST | `/accounts/{id}/transactions` | Admin | Adjust any account; `kind: adjustment` with required `direction` (`credit` \| `debit`); `Idempotency-Key` or body `ref` |
 | GET | `/accounts/me/balance` | Member | |
 | GET | `/accounts/me/ledger` | Member | Paginated; each entry has `actor_account_id` |
-| POST | `/transactions` | Member | Earn/spend; `Idempotency-Key` or body `ref` |
+| POST | `/transactions` | Member | Earn/spend; required `direction` (`credit` for earn, `debit` for spend); `Idempotency-Key` or body `ref` |
 | POST | `/batch/transactions` | Admin | CSV upload → **202** |
 | GET | `/batch/jobs/{id}` | Admin | Poll job status |
 | GET | `/batch/jobs/{id}/audit` | Admin | Paginated per-row audit |
