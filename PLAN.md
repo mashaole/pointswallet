@@ -505,6 +505,7 @@ erDiagram
     string ref
     string account_id
     string kind
+    string direction
     int points
     int balance_after_points
     datetime occurred_at
@@ -545,7 +546,7 @@ erDiagram
 
 **Keys & indexes (not shown in diagram — Mermaid allows only `type name` per line):**
 - `accounts.account_id` PK; partial unique on `email` where `deleted_at IS NULL`
-- `ledger_entries.ref` UNIQUE globally; `account_id` FK
+- `ledger_entries.ref` UNIQUE globally; `account_id` FK; `direction` CHECK (`credit` | `debit`)
 - `auth_tokens.token` UNIQUE (JWT `jti`); `account_id` FK
 - `audit_events.batch_id` FK → `batch_jobs.id`
 
